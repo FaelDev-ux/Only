@@ -1,0 +1,64 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin — Bolo de Mãe JP Confeitaria</title>
+  <link rel="stylesheet" href="admin.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Work+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="admin-config.js"></script>
+  <script type="module" src="admin.js"></script>
+</head>
+<body>
+  <div class="admin-page">
+    <header class="admin-header">
+      <h1>Painel Admin</h1>
+      <p>Cadastre itens do cardápio e controle disponibilidade.</p>
+    </header>
+
+    <section class="admin-card">
+      <h2>Novo produto</h2>
+      <form id="product-form" class="admin-form">
+        <label>
+          Nome do produto
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          Categoria
+          <select name="category" required>
+            <option value="">Selecione</option>
+            <option value="Bolos Tradicionais">Bolos Tradicionais</option>
+            <option value="Bolos Especiais">Bolos Especiais</option>
+            <option value="Fatias">Fatias</option>
+            <option value="Doces">Doces</option>
+            <option value="Sobremesas">Sobremesas</option>
+            <option value="Bebidas">Bebidas</option>
+          </select>
+        </label>
+        <label>
+          Preço (ex: 25.90)
+          <input type="text" name="price" required />
+        </label>
+        <label>
+          Foto (URL)
+          <input type="url" name="image" placeholder="https://..." />
+        </label>
+        <label class="full">
+          Descrição
+          <textarea name="details" rows="3"></textarea>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" name="available" checked />
+          Disponível no cardápio
+        </label>
+        <button type="submit">Salvar produto</button>
+      </form>
+    </section>
+
+    <section class="admin-card">
+      <h2>Produtos cadastrados</h2>
+      <div id="product-list" class="product-list"></div>
+    </section>
+  </div>
+</body>
+</html>
