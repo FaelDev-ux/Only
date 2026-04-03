@@ -174,6 +174,23 @@ export default function MenuPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const shouldLockScroll = isCartOpen || isCheckoutOpen;
+    const { body } = document;
+    const previousOverflow = body.style.overflow;
+    const previousTouchAction = body.style.touchAction;
+
+    if (shouldLockScroll) {
+      body.style.overflow = "hidden";
+      body.style.touchAction = "none";
+    }
+
+    return () => {
+      body.style.overflow = previousOverflow;
+      body.style.touchAction = previousTouchAction;
+    };
+  }, [isCartOpen, isCheckoutOpen]);
+
   const groupedProducts = buildGroupedProducts(products);
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
   const cartTotal = cart.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
@@ -272,7 +289,7 @@ export default function MenuPage() {
     event.preventDefault();
 
     if (cart.length === 0) {
-      window.alert("Seu carrinho está vazio.");
+      setAuthFeedbackMessage("Seu carrinho está vazio no momento.");
       return;
     }
 
@@ -606,11 +623,13 @@ export default function MenuPage() {
             className="cart-checkout"
             type="button"
             onClick={() => {
-              if (cart.length === 0) {
-                window.alert("Seu carrinho está vazio.");
-                return;
-              }
+                if (cart.length === 0) {
+                  setIsCartOpen(false);
+                  setAuthFeedbackMessage("Seu carrinho está vazio no momento.");
+                  return;
+                }
 
+              setIsCartOpen(false);
               setIsCheckoutOpen(true);
             }}
           >
@@ -718,7 +737,7 @@ export default function MenuPage() {
               ✕
             </button>
             <div className="modal-content">
-              <h3 id="auth-feedback-title">Não foi possível entrar</h3>
+              <h3 id="auth-feedback-title">Aviso</h3>
               <p className="modal-details">{authFeedbackMessage}</p>
             </div>
             <button className="modal-add" type="button" onClick={() => setAuthFeedbackMessage("")}>
