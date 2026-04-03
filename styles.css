@@ -8,6 +8,10 @@
   --white: #fffdfb;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -282,6 +286,10 @@ h1 {
   width: min(680px, 92vw);
 }
 
+.notice-card {
+  width: min(460px, 92vw);
+}
+
 .modal-close {
   position: absolute;
   top: 12px;
@@ -407,15 +415,60 @@ h1 {
   box-shadow: 0 8px 18px rgba(109, 74, 63, 0.12);
 }
 
-.admin-link {
+.auth-button {
   text-decoration: none;
-  padding: 10px 14px;
-  border-radius: 18px;
+  width: 48px;
+  height: 48px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
   border: 1px solid rgba(214,177,122,0.6);
   background: rgba(255, 250, 246, 0.9);
   color: #7b5a51;
   font-weight: 600;
   box-shadow: 0 8px 18px rgba(109, 74, 63, 0.12);
+  cursor: pointer;
+}
+
+.auth-button svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(214,177,122,0.6);
+  background: rgba(255, 250, 246, 0.92);
+  box-shadow: 0 8px 18px rgba(109, 74, 63, 0.12);
+  max-width: 230px;
+}
+
+.user-chip-label {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #7b5a51;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-chip-logout,
+.manage-link {
+  border: 1px solid rgba(214,177,122,0.55);
+  background: #fff7f1;
+  color: #8b6a62;
+  border-radius: 999px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-decoration: none;
+  font-size: 0.84rem;
+  font-weight: 600;
 }
 
 .cart-count {
@@ -553,6 +606,31 @@ h1 {
   height: 2px;
   background: linear-gradient(90deg, transparent, var(--gold), transparent);
   margin: 0 auto 10px;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(18px);
+  min-width: 220px;
+  max-width: min(92vw, 420px);
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: rgba(109, 74, 63, 0.96);
+  color: #fffaf7;
+  text-align: center;
+  font-size: 0.94rem;
+  box-shadow: 0 14px 28px rgba(79, 50, 43, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  z-index: 1400;
+}
+
+.toast.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 @media (max-width: 900px) {

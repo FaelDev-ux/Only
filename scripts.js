@@ -1,23 +1,20 @@
-﻿import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
 import {
-  getFirestore,
   collection,
   addDoc,
   serverTimestamp,
   getDocs,
+  query,
+  where,
+  getDoc,
+  doc,
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+import { auth, db, googleProvider } from "./firebase-client.js";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyCus77pZp_rUNAJNaPThrcGavdXkkJSdF0",
-  authDomain: "bolodemaejp.firebaseapp.com",
-  projectId: "bolodemaejp",
-  storageBucket: "bolodemaejp.firebasestorage.app",
-  messagingSenderId: "18591522219",
-  appId: "1:18591522219:web:a34f04b6dc8474ee4106ee",
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
 const ordersCollection = collection(db, "orders");
 const productsCollection = collection(db, "products");
 
@@ -37,9 +34,19 @@ const cartTotal = document.getElementById("cart-total");
 const checkoutModal = document.getElementById("checkout-modal");
 const checkoutForm = document.getElementById("checkout-form");
 const menuContainer = document.getElementById("menu-container");
+const googleAuthButton = document.getElementById("google-auth-button");
+const userChip = document.getElementById("user-chip");
+const userName = document.getElementById("user-name");
+const signOutButton = document.getElementById("sign-out-button");
+const manageLink = document.getElementById("manage-link");
+const authFeedbackModal = document.getElementById("auth-feedback-modal");
+const authFeedbackMessage = document.getElementById("auth-feedback-message");
+const authFeedbackClose = document.getElementById("auth-feedback-close");
+const cartToast = document.getElementById("cart-toast");
 
 const cart = new Map();
 let currentModalItem = null;
+let cartToastTimeout = null;
 const CATEGORY_ORDER = [
   "Bolos Tradicionais",
   "Bolos Especiais",
@@ -48,6 +55,81 @@ const CATEGORY_ORDER = [
   "Sobremesas",
   "Bebidas",
 ];
+
+const getAdminDocId = (user) => {
+  const email = user?.email?.trim();
+  return email || "";
+};
+
+const isAllowedAdmin = async (user) => {
+  const adminDocId = getAdminDocId(user);
+  if (!adminDocId) return false;
+
+  const adminRef = doc(db, "adminUsers", adminDocId);
+  const adminSnap = await getDoc(adminRef);
+  const data = adminSnap.data() || {};
+
+  return adminSnap.exists() && (data.isAdmin === true || data.active === true);
+};
+
+const describeAuthError = (error) => {
+  const code = error?.code || "auth/unknown";
+
+  if (code === "auth/popup-blocked") {
+    return "Não conseguimos abrir o login agora. Tente novamente em instantes.";
+  }
+
+  if (code === "auth/popup-closed-by-user") {
+    return "O login não foi concluído. Tente novamente quando quiser.";
+  }
+
+  if (code === "auth/unauthorized-domain") {
+    return "Não foi possível concluir o acesso agora. Tente novamente mais tarde.";
+  }
+
+  return "Não foi possível entrar agora. Tente novamente em alguns instantes.";
+};
+
+const openAuthFeedback = (message) => {
+  authFeedbackMessage.textContent = message;
+  authFeedbackModal.classList.add("is-open");
+  authFeedbackModal.setAttribute("aria-hidden", "false");
+};
+
+const closeAuthFeedback = () => {
+  authFeedbackModal.classList.remove("is-open");
+  authFeedbackModal.setAttribute("aria-hidden", "true");
+};
+
+const showCartToast = (message) => {
+  if (!cartToast) return;
+
+  cartToast.textContent = message;
+  cartToast.classList.add("is-visible");
+
+  if (cartToastTimeout) {
+    window.clearTimeout(cartToastTimeout);
+  }
+
+  cartToastTimeout = window.setTimeout(() => {
+    cartToast.classList.remove("is-visible");
+  }, 2000);
+};
+
+const setPublicAuthState = ({
+  loggedIn,
+  name = "",
+  isAdmin = false,
+}) => {
+  googleAuthButton.hidden = loggedIn;
+  userChip.hidden = !loggedIn;
+  manageLink.hidden = !loggedIn || !isAdmin;
+  userName.textContent = name ? `Olá, ${name}` : "Conta Google";
+};
+
+setPublicAuthState({
+  loggedIn: false,
+});
 
 const openModal = (button) => {
   modalTitle.textContent = button.dataset.title || "";
@@ -101,6 +183,14 @@ modal.addEventListener("click", (event) => {
     closeModal();
   }
 });
+
+authFeedbackModal.addEventListener("click", (event) => {
+  if (event.target.dataset.close === "auth-feedback") {
+    closeAuthFeedback();
+  }
+});
+
+authFeedbackClose.addEventListener("click", closeAuthFeedback);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && modal.classList.contains("is-open")) {
@@ -169,6 +259,7 @@ const addToCart = (item) => {
     cart.set(item.title, { ...item, qty: 1 });
   }
   renderCart();
+  showCartToast(`${item.title} foi adicionado ao carrinho.`);
 };
 
 const updateQty = (title, delta) => {
@@ -272,12 +363,67 @@ const renderProducts = (products) => {
 };
 
 const loadProducts = async () => {
-  const snapshot = await getDocs(productsCollection);
-  const products = snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((product) => product.available === true);
+  const publicProductsQuery = query(productsCollection, where("available", "==", true));
+  const snapshot = await getDocs(publicProductsQuery);
+  const products = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   renderProducts(products);
 };
+
+googleAuthButton.addEventListener("click", async () => {
+  if (window.location.protocol === "file:") {
+    openAuthFeedback("Não foi possível abrir o login neste momento.");
+    return;
+  }
+
+  googleAuthButton.disabled = true;
+
+  try {
+    await signInWithPopup(auth, googleProvider);
+  } catch (error) {
+    console.error(error);
+    openAuthFeedback(describeAuthError(error));
+  } finally {
+    googleAuthButton.disabled = false;
+  }
+});
+
+signOutButton.addEventListener("click", async () => {
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error(error);
+    alert("Não foi possível sair agora.");
+  }
+});
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    setPublicAuthState({
+      loggedIn: false,
+    });
+    return;
+  }
+
+  try {
+    const allowed = await isAllowedAdmin(user);
+    const firstName = (user.displayName || user.email || "Conta Google").split(" ")[0];
+
+    setPublicAuthState({
+      loggedIn: true,
+      name: firstName,
+      isAdmin: allowed,
+    });
+  } catch (error) {
+    console.error(error);
+    const firstName = (user.displayName || user.email || "Conta Google").split(" ")[0];
+
+    setPublicAuthState({
+      loggedIn: true,
+      name: firstName,
+      isAdmin: false,
+    });
+  }
+});
 
 document.getElementById("cart-open").addEventListener("click", () => {
   cartPanel.classList.add("is-open");
