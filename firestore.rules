@@ -12,40 +12,144 @@ service cloud.firestore {
         : "";
     }
 
+    function adminDoc() {
+      return get(/databases/$(database)/documents/adminUsers/$(adminEmail()));
+    }
+
+    function adminDocExists() {
+      return adminEmail() != ""
+        && exists(/databases/$(database)/documents/adminUsers/$(adminEmail()));
+    }
+
     function isAdmin() {
       return signedIn()
-        && adminEmail() != ""
-        && exists(/databases/$(database)/documents/adminUsers/$(adminEmail()))
+        && adminDocExists()
         && (
-          get(/databases/$(database)/documents/adminUsers/$(adminEmail())).data.isAdmin == true
-          || get(/databases/$(database)/documents/adminUsers/$(adminEmail())).data.active == true
+          adminDoc().data.isAdmin == true
+          || adminDoc().data.active == true
         );
+    }
+
+    function validShortText(value, max) {
+      return value is string && value.size() > 0 && value.size() <= max;
+    }
+
+    function validOptionalText(value, max) {
+      return !(value is string) || value.size() <= max;
+    }
+
+    function validPriceText(value) {
+      return value is string
+        && value.size() >= 1
+        && value.size() <= 20
+        && value.matches('^[0-9]+([\\.,][0-9]{1,2})?$');
+    }
+
+    function validProductPayload() {
+      return request.resource.data.keys().hasOnly([
+          'title',
+          'category',
+          'price',
+          'image',
+          'details',
+          'available',
+          'createdAt'
+        ])
+        && validShortText(request.resource.data.title, 120)
+        && validShortText(request.resource.data.category, 60)
+        && validPriceText(request.resource.data.price)
+        && validOptionalText(request.resource.data.image, 2000)
+        && validOptionalText(request.resource.data.details, 1000)
+        && request.resource.data.available is bool;
+    }
+
+    function validCustomerPayload() {
+      return request.resource.data.customer is map
+        && request.resource.data.customer.keys().hasOnly([
+          'name',
+          'phone',
+          'payment',
+          'cep',
+          'address',
+          'district',
+          'complement',
+          'notes',
+          'city',
+          'state'
+        ])
+        && validShortText(request.resource.data.customer.name, 120)
+        && validShortText(request.resource.data.customer.phone, 20)
+        && validShortText(request.resource.data.customer.payment, 30)
+        && validShortText(request.resource.data.customer.cep, 10)
+        && validShortText(request.resource.data.customer.address, 180)
+        && validShortText(request.resource.data.customer.district, 120)
+        && validOptionalText(request.resource.data.customer.complement, 120)
+        && validOptionalText(request.resource.data.customer.notes, 500)
+        && validOptionalText(request.resource.data.customer.city, 120)
+        && validOptionalText(request.resource.data.customer.state, 10);
+    }
+
+    function validOrderPayload() {
+      return request.resource.data.keys().hasOnly([
+          'items',
+          'total',
+          'customer',
+          'createdAt'
+        ])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 20
+        && request.resource.data.total is number
+        && request.resource.data.total >= 0
+        && request.resource.data.total <= 100000
+        && validCustomerPayload();
     }
 
     match /adminUsers/{email} {
       allow read: if signedIn() && email == adminEmail();
+
       allow create: if signedIn()
         && email == adminEmail()
+        && request.resource.data.keys().hasOnly([
+          'email',
+          'displayName',
+          'photoURL',
+          'isAdmin',
+          'createdAt',
+          'lastLoginAt'
+        ])
         && request.resource.data.email == adminEmail()
-        && request.resource.data.isAdmin == false;
+        && request.resource.data.isAdmin == false
+        && validOptionalText(request.resource.data.displayName, 120)
+        && validOptionalText(request.resource.data.photoURL, 2000);
+
       allow update: if signedIn()
         && email == adminEmail()
+        && request.resource.data.keys().hasOnly([
+          'email',
+          'displayName',
+          'photoURL',
+          'isAdmin',
+          'createdAt',
+          'lastLoginAt'
+        ])
         && request.resource.data.email == resource.data.email
         && request.resource.data.isAdmin == resource.data.isAdmin
-        && (
-          !("active" in resource.data)
-          || request.resource.data.active == resource.data.active
-        );
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validOptionalText(request.resource.data.displayName, 120)
+        && validOptionalText(request.resource.data.photoURL, 2000);
+
       allow delete: if false;
     }
 
     match /products/{productId} {
       allow read: if isAdmin() || resource.data.available == true;
-      allow create, update, delete: if isAdmin();
+      allow create, update: if isAdmin() && validProductPayload();
+      allow delete: if isAdmin();
     }
 
     match /orders/{orderId} {
-      allow create: if true;
+      allow create: if validOrderPayload();
       allow read, update, delete: if isAdmin();
     }
   }
