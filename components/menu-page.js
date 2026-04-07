@@ -40,6 +40,7 @@ const initialCheckoutState = {
   payment: "",
   cep: "",
   address: "",
+  addressNumber: "",
   district: "",
   complement: "",
   notes: "",
@@ -331,6 +332,7 @@ export default function MenuPage() {
         payment: checkoutData.payment,
         cep: normalizedCep.trim(),
         address: checkoutData.address.trim() || viaCepData.logradouro || "",
+        addressNumber: checkoutData.addressNumber.trim(),
         district: checkoutData.district.trim() || viaCepData.bairro || "",
         complement: checkoutData.complement.trim(),
         notes: checkoutData.notes.trim(),
@@ -357,7 +359,7 @@ export default function MenuPage() {
         `Nome: ${customer.name}`,
         `WhatsApp: ${customer.phone}`,
         `Pagamento: ${customer.payment}`,
-        `Endereço: ${customer.address}, ${customer.district} - CEP ${customer.cep}`,
+        `Endereço: ${customer.address}, ${customer.addressNumber}, ${customer.district} - CEP ${customer.cep}`,
         `Cidade/UF: ${customer.city} - ${customer.state}`,
         `Complemento: ${customer.complement || "-"}`,
         `Observações: ${customer.notes || "-"}`,
@@ -428,11 +430,6 @@ export default function MenuPage() {
                   Gerenciar produtos
                 </Link>
               ) : null}
-
-              <button className="cart-button" type="button" onClick={() => setIsCartOpen(true)}>
-                <span>Carrinho</span>
-                <span className="cart-count">{cartCount}</span>
-              </button>
             </div>
 
             <div className="logo-wrap">
@@ -526,6 +523,11 @@ export default function MenuPage() {
           <p>Encomendas e detalhes pelo WhatsApp • @bolodemaejp</p>
         </footer>
       </div>
+
+      <button className="mobile-cart-fab" type="button" onClick={() => setIsCartOpen(true)}>
+        <span>Carrinho</span>
+        <span className="cart-count">{cartCount}</span>
+      </button>
 
       <div className={`modal${modalProduct ? " is-open" : ""}`} aria-hidden={modalProduct ? "false" : "true"}>
         <div className="modal-backdrop" onClick={() => setModalProduct(null)} />
@@ -695,6 +697,17 @@ export default function MenuPage() {
                 <label>
                   Endereço
                   <input type="text" name="address" required value={checkoutData.address} onChange={handleCheckoutFieldChange} />
+                </label>
+
+                <label>
+                  Número
+                  <input
+                    type="text"
+                    name="addressNumber"
+                    required
+                    value={checkoutData.addressNumber}
+                    onChange={handleCheckoutFieldChange}
+                  />
                 </label>
 
                 <label>

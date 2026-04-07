@@ -198,7 +198,7 @@ h1 {
 
 .item-button:focus-visible,
 .primary-link:focus-visible,
-.cart-button:focus-visible,
+.mobile-cart-fab:focus-visible,
 .auth-button:focus-visible {
   outline: 2px solid rgba(214, 177, 122, 0.7);
   outline-offset: 2px;
@@ -407,6 +407,52 @@ h1 {
   resize: vertical;
 }
 
+.admin-image-tools {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.admin-image-preview,
+.admin-image-placeholder {
+  min-height: 170px;
+  border-radius: 18px;
+  border: 1px dashed rgba(214, 177, 122, 0.55);
+  background: radial-gradient(140px 100px at 30% 20%, #fff5f7 0%, #f7e6e1 50%, #ead7cf 100%);
+  box-shadow: inset 0 0 16px rgba(255, 255, 255, 0.65);
+}
+
+.admin-image-preview {
+  background-size: cover;
+  background-position: center;
+}
+
+.admin-image-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: center;
+  color: #8b6a62;
+  font-size: 0.9rem;
+}
+
+.admin-image-meta {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-image-help,
+.admin-image-feedback {
+  margin: 0;
+  color: #7a5a52;
+  line-height: 1.5;
+}
+
+.admin-image-feedback {
+  font-size: 0.92rem;
+}
+
 .form-span-2,
 .admin-form .full,
 .toggle,
@@ -448,7 +494,6 @@ h1 {
   justify-content: flex-end;
 }
 
-.cart-button,
 .auth-button {
   display: inline-flex;
   align-items: center;
@@ -539,6 +584,24 @@ h1 {
 
 .cart-panel.is-open {
   display: flex;
+}
+
+.mobile-cart-fab {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(214, 177, 122, 0.68);
+  background: linear-gradient(135deg, #fff8f3 0%, #f4e3d6 50%, #f8efe7 100%);
+  color: #6d4a3f;
+  font-weight: 700;
+  box-shadow: 0 14px 28px rgba(109, 74, 63, 0.18);
+  z-index: 1250;
+  cursor: pointer;
 }
 
 .cart-header,
@@ -854,9 +917,17 @@ h1 {
     grid-column: span 1;
   }
 
+  .admin-image-tools {
+    grid-template-columns: 1fr;
+  }
+
   .cart-fab {
     position: static;
     margin-bottom: 18px;
+  }
+
+  .toast {
+    bottom: 88px;
   }
 
   .hero-frame {

@@ -31,6 +31,71 @@ const initialFormState = {
   available: true,
 };
 
+const MAX_IMAGE_DATA_URL_LENGTH = 450000;
+
+function loadImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Não foi possível ler a foto selecionada."));
+      image.src = reader.result;
+    };
+
+    reader.onerror = () => reject(new Error("Não foi possível ler a foto selecionada."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function optimizeImageFile(file) {
+  const image = await loadImageFromFile(file);
+  let width = image.width;
+  let height = image.height;
+  const maxSide = 1400;
+
+  if (width > maxSide || height > maxSide) {
+    const scale = Math.min(maxSide / width, maxSide / height);
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
+  }
+
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    throw new Error("Não foi possível preparar a foto para envio.");
+  }
+
+  let quality = 0.86;
+  let attempts = 0;
+  let output = "";
+
+  while (attempts < 6) {
+    canvas.width = width;
+    canvas.height = height;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    output = canvas.toDataURL("image/jpeg", quality);
+
+    if (output.length <= MAX_IMAGE_DATA_URL_LENGTH) {
+      return output;
+    }
+
+    quality = Math.max(0.5, quality - 0.08);
+    width = Math.max(700, Math.round(width * 0.88));
+    height = Math.max(700, Math.round(height * 0.88));
+    attempts += 1;
+  }
+
+  if (output.length > MAX_IMAGE_DATA_URL_LENGTH) {
+    throw new Error("A foto ficou muito pesada. Tente uma imagem menor ou mais simples.");
+  }
+
+  return output;
+}
+
 async function ensureAdminProfile(user) {
   const adminDocId = getAdminDocId(user);
   if (!adminDocId) return;
@@ -86,6 +151,8 @@ export default function AdminPage() {
   const [submitting, setSubmitting] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [productsLoading, setProductsLoading] = useState(false);
+  const [imageProcessing, setImageProcessing] = useState(false);
+  const [imageFeedback, setImageFeedback] = useState("");
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
@@ -186,10 +253,42 @@ export default function AdminPage() {
 
   function handleFieldChange(event) {
     const { name, type, checked, value } = event.target;
+    if (name === "image") {
+      setImageFeedback("");
+    }
     setFormData((current) => ({
       ...current,
       [name]: type === "checkbox" ? checked : value,
     }));
+  }
+
+  async function handleImageUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setImageFeedback("Escolha um arquivo de imagem válido.");
+      return;
+    }
+
+    setImageProcessing(true);
+    setImageFeedback("Preparando foto...");
+
+    try {
+      const optimizedImage = await optimizeImageFile(file);
+      setFormData((current) => ({
+        ...current,
+        image: optimizedImage,
+      }));
+      setImageFeedback("Foto carregada com sucesso.");
+    } catch (error) {
+      console.error(error);
+      setImageFeedback(error.message || "Não foi possível carregar essa foto.");
+    } finally {
+      setImageProcessing(false);
+    }
   }
 
   async function handleSubmit(event) {
@@ -220,6 +319,7 @@ export default function AdminPage() {
     try {
       await addDoc(productsCollection, product);
       setFormData(initialFormState);
+      setImageFeedback("");
     } catch (error) {
       console.error(error);
       window.alert(
@@ -393,15 +493,54 @@ export default function AdminPage() {
               </label>
 
               <label>
-                Foto (URL)
+                Foto
                 <input
-                  type="url"
+                  type="text"
                   name="image"
-                  placeholder="https://..."
+                  placeholder="Cole uma URL ou envie uma foto abaixo"
                   value={formData.image}
                   onChange={handleFieldChange}
                 />
               </label>
+
+              <label>
+                Enviar foto do celular
+                <input type="file" accept="image/*" capture="environment" onChange={handleImageUpload} />
+              </label>
+
+              <div className="admin-image-tools full">
+                {formData.image ? (
+                  <div
+                    className="admin-image-preview"
+                    style={{
+                      backgroundImage: `url("${formData.image}")`,
+                    }}
+                  />
+                ) : (
+                  <div className="admin-image-placeholder">A prévia da foto aparece aqui.</div>
+                )}
+
+                <div className="admin-image-meta">
+                  <p className="admin-image-help">
+                    Você pode colar uma URL ou enviar uma foto direto do celular. A imagem é otimizada
+                    automaticamente antes de salvar.
+                  </p>
+                  {imageFeedback ? <p className="admin-image-feedback">{imageFeedback}</p> : null}
+                  {formData.image ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => {
+                        setFormData((current) => ({ ...current, image: "" }));
+                        setImageFeedback("");
+                      }}
+                      disabled={imageProcessing}
+                    >
+                      Remover foto
+                    </button>
+                  ) : null}
+                </div>
+              </div>
 
               <label className="full">
                 Descrição
