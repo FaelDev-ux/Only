@@ -322,9 +322,18 @@ export default function AdminPage() {
       setImageFeedback("");
     } catch (error) {
       console.error(error);
-      window.alert(
-        "Não foi possível salvar o produto. Confira se sua conta está liberada como admin."
-      );
+      if (error?.code === "permission-denied") {
+        const isUploadedImage =
+          typeof product.image === "string" && product.image.startsWith("data:image/");
+
+        window.alert(
+          isUploadedImage
+            ? "Não foi possível salvar a foto deste produto. Publique as rules mais recentes do Firestore e, se precisar, tente uma imagem menor."
+            : "Não foi possível salvar o produto porque a gravação foi bloqueada pelas rules do Firestore. Confira se as rules mais recentes foram publicadas."
+        );
+      } else {
+        window.alert("Não foi possível salvar o produto. Tente novamente.");
+      }
     } finally {
       setSubmitting(false);
     }
