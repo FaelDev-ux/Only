@@ -46,6 +46,39 @@ const initialCheckoutState = {
   notes: "",
 };
 
+function normalizeSubProducts(subProducts) {
+  if (!Array.isArray(subProducts)) return [];
+
+  return subProducts
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function buildModalProduct(product) {
+  const subProducts = normalizeSubProducts(product?.subProducts);
+
+  return {
+    id: product?.id || "",
+    title: product?.title || "",
+    price: formatDisplayPrice(product?.price || ""),
+    details: product?.details || "",
+    image: product?.image || "",
+    subProducts,
+    selectedSubProduct: "",
+  };
+}
+
+function buildCartItem(product, selectedSubProduct = "") {
+  const selectedOption = selectedSubProduct.trim();
+
+  return {
+    title: selectedOption ? `${product.title} - ${selectedOption}` : product.title,
+    price: product.price,
+    image: product.image || "",
+  };
+}
+
 function GoogleIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -196,6 +229,10 @@ export default function MenuPage() {
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
   const cartTotal = cart.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
 
+  function openProductModal(product) {
+    setModalProduct(buildModalProduct(product));
+  }
+
   function showCartToast(message) {
     setToastMessage(message);
 
@@ -232,6 +269,17 @@ export default function MenuPage() {
         .map((item) => (item.title === title ? { ...item, qty: item.qty + delta } : item))
         .filter((item) => item.qty > 0)
     );
+  }
+
+  function handleAddProduct(product) {
+    const modalData = buildModalProduct(product);
+
+    if (modalData.subProducts.length > 0) {
+      setModalProduct(modalData);
+      return;
+    }
+
+    addToCart(buildCartItem(modalData));
   }
 
   async function handleGoogleSignIn() {
@@ -468,14 +516,7 @@ export default function MenuPage() {
                         <button
                           className="item-button"
                           type="button"
-                          onClick={() =>
-                            setModalProduct({
-                              title: product.title || "",
-                              price: priceText,
-                              details: product.details || "",
-                              image,
-                            })
-                          }
+                          onClick={() => openProductModal(product)}
                         >
                           <div
                             className={`item-photo${image ? " has-image" : ""}`}
@@ -499,15 +540,11 @@ export default function MenuPage() {
                         <button
                           className="add-to-cart"
                           type="button"
-                          onClick={() =>
-                            addToCart({
-                              title: product.title || "",
-                              price: priceText,
-                              image,
-                            })
-                          }
+                          onClick={() => handleAddProduct(product)}
                         >
-                          Adicionar ao carrinho
+                          {Array.isArray(product.subProducts) && product.subProducts.length > 0
+                            ? "Escolher opção"
+                            : "Adicionar ao carrinho"}
                         </button>
                       </li>
                     );
@@ -558,16 +595,51 @@ export default function MenuPage() {
               <h3 id="modal-title">{modalProduct.title}</h3>
               <p className="modal-price">{modalProduct.price}</p>
               <p className="modal-details">{modalProduct.details}</p>
+              {modalProduct.subProducts.length > 0 ? (
+                <div className="modal-options">
+                  <p className="modal-options-label">Escolha uma opção</p>
+                  <div className="modal-options-grid">
+                    {modalProduct.subProducts.map((subProduct) => (
+                      <button
+                        key={subProduct}
+                        className={`modal-option-button${
+                          modalProduct.selectedSubProduct === subProduct ? " is-selected" : ""
+                        }`}
+                        type="button"
+                        onClick={() =>
+                          setModalProduct((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  selectedSubProduct: subProduct,
+                                }
+                              : current
+                          )
+                        }
+                      >
+                        {subProduct}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
             <button
               className="modal-add"
               type="button"
+              disabled={
+                modalProduct.subProducts.length > 0 && !modalProduct.selectedSubProduct
+              }
               onClick={() => {
-                addToCart(modalProduct);
+                addToCart(buildCartItem(modalProduct, modalProduct.selectedSubProduct));
                 setModalProduct(null);
               }}
             >
-              Adicionar ao carrinho
+              {modalProduct.subProducts.length > 0
+                ? modalProduct.selectedSubProduct
+                  ? `Adicionar ${modalProduct.selectedSubProduct}`
+                  : "Escolha uma opção"
+                : "Adicionar ao carrinho"}
             </button>
           </div>
         ) : null}

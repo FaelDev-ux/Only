@@ -55,6 +55,11 @@ service cloud.firestore {
         && value.matches('^[0-9]+([\\.,][0-9]{1,2})?$');
     }
 
+    function validSubProductsField(value) {
+      return value is list
+        && value.size() <= 20;
+    }
+
     function validProductPayload() {
       return request.resource.data.keys().hasOnly([
           'title',
@@ -62,6 +67,7 @@ service cloud.firestore {
           'price',
           'image',
           'details',
+          'subProducts',
           'available',
           'createdAt'
         ])
@@ -70,6 +76,10 @@ service cloud.firestore {
         && validPriceText(request.resource.data.price)
         && validImageField(request.resource.data.image)
         && validOptionalText(request.resource.data.details, 1000)
+        && (
+          !request.resource.data.keys().hasAny(['subProducts'])
+          || validSubProductsField(request.resource.data.subProducts)
+        )
         && request.resource.data.available is bool;
     }
 

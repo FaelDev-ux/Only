@@ -178,6 +178,7 @@ h1 {
 }
 
 .add-to-cart:hover,
+.modal-option-button:hover,
 .modal-add:hover,
 .primary-button:hover,
 .secondary-button:hover,
@@ -199,7 +200,8 @@ h1 {
 .item-button:focus-visible,
 .primary-link:focus-visible,
 .mobile-cart-fab:focus-visible,
-.auth-button:focus-visible {
+.auth-button:focus-visible,
+.modal-option-button:focus-visible {
   outline: 2px solid rgba(214, 177, 122, 0.7);
   outline-offset: 2px;
 }
@@ -366,6 +368,42 @@ h1 {
   margin: 0;
   color: #7a5a52;
   line-height: 1.55;
+}
+
+.modal-options {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.modal-options-label,
+.field-help {
+  margin: 0;
+  color: #8b6a62;
+  line-height: 1.5;
+}
+
+.modal-options-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.modal-option-button {
+  border: 1px solid rgba(214, 177, 122, 0.55);
+  background: rgba(255, 250, 246, 0.92);
+  color: #7b5a51;
+  border-radius: 999px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.modal-option-button.is-selected {
+  background: linear-gradient(135deg, #fdf6f1 0%, #f4e3d6 50%, #f8efe7 100%);
+  box-shadow: 0 10px 20px rgba(109, 74, 63, 0.14);
+  color: #6d4a3f;
+  border-color: rgba(214, 177, 122, 0.8);
 }
 
 .checkout-form {

@@ -28,6 +28,7 @@ const initialFormState = {
   price: "",
   image: "",
   details: "",
+  subProductsText: "",
   available: true,
 };
 
@@ -94,6 +95,18 @@ async function optimizeImageFile(file) {
   }
 
   return output;
+}
+
+function parseSubProductsText(value) {
+  const uniqueOptions = new Set();
+
+  value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((item) => uniqueOptions.add(item));
+
+  return Array.from(uniqueOptions).slice(0, 20);
 }
 
 async function ensureAdminProfile(user) {
@@ -305,6 +318,7 @@ export default function AdminPage() {
       price: formData.price.trim(),
       image: formData.image.trim(),
       details: formData.details.trim(),
+      subProducts: parseSubProductsText(formData.subProductsText),
       available: Boolean(formData.available),
       createdAt: serverTimestamp(),
     };
@@ -559,6 +573,20 @@ export default function AdminPage() {
                   value={formData.details}
                   onChange={handleFieldChange}
                 />
+              </label>
+
+              <label className="full">
+                Variações do produto
+                <textarea
+                  name="subProductsText"
+                  rows="4"
+                  placeholder={"Uma opção por linha"}
+                  value={formData.subProductsText}
+                  onChange={handleFieldChange}
+                />
+                <small className="field-help">
+                  Se este produto tiver variações (ex: sabores), liste cada opção em uma linha. As opções cadastradas aparecerão como um campo de texto separado no cardápio. Limite de 20 opções.
+                </small>
               </label>
 
               <label className="toggle">
