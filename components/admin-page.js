@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   addDoc,
@@ -422,6 +423,15 @@ export default function AdminPage() {
       <header className="admin-header">
         <h1>Painel Admin</h1>
         <p>Cadastre itens do cardápio e controle disponibilidade com login Google.</p>
+
+        <div className="admin-shortcuts">
+          <Link className="secondary-button" href="/">
+            Ver cardápio
+          </Link>
+          <Link className="secondary-button" href="/caixa">
+            Abrir caixa
+          </Link>
+        </div>
 
         {authState.loggedIn ? (
           <div className="admin-session">

@@ -474,9 +474,14 @@ export default function MenuPage() {
               ) : null}
 
               {authState.loggedIn && authState.isAdmin ? (
-                <Link className="manage-link" href="/admin">
-                  Gerenciar produtos
-                </Link>
+                <>
+                  <Link className="manage-link" href="/admin">
+                    Gerenciar produtos
+                  </Link>
+                  <Link className="manage-link" href="/caixa">
+                    Abrir caixa
+                  </Link>
+                </>
               ) : null}
             </div>
 

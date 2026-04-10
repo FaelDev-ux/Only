@@ -127,6 +127,28 @@ service cloud.firestore {
         && validCustomerPayload();
     }
 
+    function validCashSalePayload() {
+      return request.resource.data.keys().hasOnly([
+          'items',
+          'total',
+          'payment',
+          'customerName',
+          'notes',
+          'source',
+          'createdAt'
+        ])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 30
+        && request.resource.data.total is number
+        && request.resource.data.total >= 0
+        && request.resource.data.total <= 100000
+        && validShortText(request.resource.data.payment, 30)
+        && validOptionalText(request.resource.data.customerName, 120)
+        && validOptionalText(request.resource.data.notes, 500)
+        && request.resource.data.source == 'caixa';
+    }
+
     match /adminUsers/{email} {
       allow read: if signedIn() && email == adminEmail();
 
@@ -173,6 +195,11 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow create: if validOrderPayload();
       allow read, update, delete: if isAdmin();
+    }
+
+    match /cashSales/{saleId} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin() && validCashSalePayload();
     }
   }
 }
