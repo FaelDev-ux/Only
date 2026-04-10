@@ -10,6 +10,7 @@ import {
   onSnapshot,
   serverTimestamp,
   setDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
@@ -25,6 +26,7 @@ import {
 const productsCollection = collection(db, "products");
 const ordersCollection = collection(db, "orders");
 const cashSalesCollection = collection(db, "cashSales");
+const cashSessionsCollection = collection(db, "cashSessions");
 
 const initialSaleForm = {
   customerName: "",
@@ -34,27 +36,18 @@ const initialSaleForm = {
 
 function getDocDate(value) {
   if (!value) return null;
-  if (typeof value.toDate === "function") return value.toDate();
-  if (typeof value.seconds === "number") return new Date(value.seconds * 1000);
+  if (typeof value?.toDate === "function") return value.toDate();
+  if (typeof value?.seconds === "number") return new Date(value.seconds * 1000);
   return null;
 }
 
-function isToday(value) {
-  const date = getDocDate(value);
-  if (!date) return false;
-
-  const now = new Date();
-
-  return (
-    date.getDate() === now.getDate() &&
-    date.getMonth() === now.getMonth() &&
-    date.getFullYear() === now.getFullYear()
-  );
+function getDocTime(value) {
+  return getDocDate(value)?.getTime() || 0;
 }
 
 function formatDateTime(value) {
   const date = getDocDate(value);
-  if (!date) return "Agora mesmo";
+  if (!date) return "Agora";
 
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
@@ -73,13 +66,20 @@ function normalizeSubProducts(subProducts) {
     .slice(0, 20);
 }
 
+function normalizePayment(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function buildPickerProduct(product) {
   return {
     id: product?.id || "",
     title: product?.title || "",
     price: formatDisplayPrice(product?.price || ""),
     image: product?.image || "",
-    details: product?.details || "",
     subProducts: normalizeSubProducts(product?.subProducts),
     selectedSubProduct: "",
   };
@@ -94,6 +94,38 @@ function buildSaleItem(product, selectedSubProduct = "") {
     image: product.image || "",
     qty: 1,
   };
+}
+
+function sumByPayment(items, getPayment, getTotal) {
+  return items.reduce(
+    (totals, item) => {
+      const payment = normalizePayment(getPayment(item));
+      const value = Number(getTotal(item) || 0);
+
+      totals.total += value;
+      if (payment === "dinheiro") totals.cash += value;
+      else if (payment === "pix") totals.pix += value;
+      else if (payment === "cartao") totals.card += value;
+      else totals.other += value;
+
+      return totals;
+    },
+    { total: 0, cash: 0, pix: 0, card: 0, other: 0 }
+  );
+}
+
+function filterBySession(items, session) {
+  if (!session) return [];
+
+  const openedAt = getDocTime(session.openedAt);
+  const closedAt = getDocTime(session.closedAt);
+
+  return items.filter((item) => {
+    const createdAt = getDocTime(item.createdAt);
+    if (!createdAt || createdAt < openedAt) return false;
+    if (closedAt && createdAt > closedAt) return false;
+    return true;
+  });
 }
 
 async function ensureAdminProfile(user) {
@@ -141,7 +173,7 @@ export default function CashPage() {
   const [authState, setAuthState] = useState({
     loggedIn: false,
     isAdmin: false,
-    status: "Verificando sessão...",
+    status: "Verificando sessao...",
     name: "",
     email: "",
     showDenied: false,
@@ -149,14 +181,19 @@ export default function CashPage() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [cashSales, setCashSales] = useState([]);
+  const [cashSessions, setCashSessions] = useState([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [salesLoading, setSalesLoading] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [saleForm, setSaleForm] = useState(initialSaleForm);
   const [saleCart, setSaleCart] = useState([]);
   const [pickerProduct, setPickerProduct] = useState(null);
+  const [openingAmountText, setOpeningAmountText] = useState("0,00");
   const [submittingSale, setSubmittingSale] = useState(false);
+  const [openingSession, setOpeningSession] = useState(false);
+  const [closingSession, setClosingSession] = useState(false);
   const [noticeMessage, setNoticeMessage] = useState("");
 
   useEffect(() => {
@@ -164,6 +201,7 @@ export default function CashPage() {
       setProducts([]);
       setOrders([]);
       setCashSales([]);
+      setCashSessions([]);
 
       if (!user) {
         setAuthState({
@@ -180,7 +218,7 @@ export default function CashPage() {
       setAuthState({
         loggedIn: true,
         isAdmin: false,
-        status: "Validando permissões do caixa...",
+        status: "Validando permissoes do caixa...",
         name: user.displayName || "Conta Google",
         email: user.email || "",
         showDenied: false,
@@ -194,7 +232,7 @@ export default function CashPage() {
           setAuthState({
             loggedIn: true,
             isAdmin: false,
-            status: "Essa conta ainda não foi liberada para o caixa.",
+            status: "Essa conta ainda nao foi liberada para o caixa.",
             name: user.displayName || "Conta Google",
             email: user.email || "",
             showDenied: true,
@@ -215,7 +253,7 @@ export default function CashPage() {
         setAuthState({
           loggedIn: true,
           isAdmin: false,
-          status: "Não foi possível validar o acesso ao caixa agora.",
+          status: "Nao foi possivel validar o acesso ao caixa agora.",
           name: user.displayName || "Conta Google",
           email: user.email || "",
           showDenied: true,
@@ -273,7 +311,7 @@ export default function CashPage() {
             id: item.id,
             ...item.data(),
           }))
-          .sort((a, b) => (getDocDate(b.createdAt)?.getTime() || 0) - (getDocDate(a.createdAt)?.getTime() || 0));
+          .sort((a, b) => getDocTime(b.createdAt) - getDocTime(a.createdAt));
 
         setOrders(nextOrders);
         setOrdersLoading(false);
@@ -301,7 +339,7 @@ export default function CashPage() {
             id: item.id,
             ...item.data(),
           }))
-          .sort((a, b) => (getDocDate(b.createdAt)?.getTime() || 0) - (getDocDate(a.createdAt)?.getTime() || 0));
+          .sort((a, b) => getDocTime(b.createdAt) - getDocTime(a.createdAt));
 
         setCashSales(nextSales);
         setSalesLoading(false);
@@ -316,14 +354,56 @@ export default function CashPage() {
     return unsubscribeSales;
   }, [authState.isAdmin, authState.loggedIn]);
 
+  useEffect(() => {
+    if (!authState.loggedIn || !authState.isAdmin) return undefined;
+
+    setSessionsLoading(true);
+
+    const unsubscribeSessions = onSnapshot(
+      cashSessionsCollection,
+      (snapshot) => {
+        const nextSessions = snapshot.docs
+          .map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }))
+          .sort((a, b) => getDocTime(b.openedAt) - getDocTime(a.openedAt));
+
+        setCashSessions(nextSessions);
+        setSessionsLoading(false);
+      },
+      (error) => {
+        console.error(error);
+        setCashSessions([]);
+        setSessionsLoading(false);
+      }
+    );
+
+    return unsubscribeSessions;
+  }, [authState.isAdmin, authState.loggedIn]);
+
   const groupedProducts = useMemo(() => buildGroupedProducts(products), [products]);
-  const todayOrders = useMemo(() => orders.filter((item) => isToday(item.createdAt)), [orders]);
-  const todayCashSales = useMemo(
-    () => cashSales.filter((item) => isToday(item.createdAt)),
-    [cashSales]
+  const activeSession = useMemo(
+    () => cashSessions.find((session) => session.status === "open") || null,
+    [cashSessions]
   );
-  const onlineTotal = todayOrders.reduce((sum, item) => sum + Number(item.total || 0), 0);
-  const cashTotal = todayCashSales.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  const recentSessions = useMemo(() => cashSessions.slice(0, 6), [cashSessions]);
+  const sessionOrders = useMemo(() => filterBySession(orders, activeSession), [orders, activeSession]);
+  const sessionCashSales = useMemo(
+    () => filterBySession(cashSales, activeSession),
+    [cashSales, activeSession]
+  );
+  const sessionOnlineTotals = useMemo(
+    () => sumByPayment(sessionOrders, (item) => item.customer?.payment, (item) => item.total),
+    [sessionOrders]
+  );
+  const sessionCashSaleTotals = useMemo(
+    () => sumByPayment(sessionCashSales, (item) => item.payment, (item) => item.total),
+    [sessionCashSales]
+  );
+  const sessionMovementTotal = sessionOnlineTotals.total + sessionCashSaleTotals.total;
+  const sessionCashInflow = sessionOnlineTotals.cash + sessionCashSaleTotals.cash;
+  const currentBalance = Number(activeSession?.openingAmount || 0) + sessionCashInflow;
   const saleCartTotal = saleCart.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
 
   function addItemToSale(item) {
@@ -341,6 +421,11 @@ export default function CashPage() {
   }
 
   function handleAddProduct(product) {
+    if (!activeSession) {
+      setNoticeMessage("Abra o caixa antes de lancar vendas presenciais.");
+      return;
+    }
+
     const nextProduct = buildPickerProduct(product);
 
     if (nextProduct.subProducts.length > 0) {
@@ -385,11 +470,84 @@ export default function CashPage() {
       await signOut(auth);
     } catch (error) {
       console.error(error);
-      setNoticeMessage("Não foi possível sair do caixa agora.");
+      setNoticeMessage("Nao foi possivel sair do caixa agora.");
+    }
+  }
+
+  async function handleOpenSession() {
+    if (activeSession) {
+      setNoticeMessage("Ja existe um caixa aberto neste momento.");
+      return;
+    }
+
+    setOpeningSession(true);
+
+    try {
+      const openingAmount = Math.max(0, parsePrice(openingAmountText || "0"));
+
+      await addDoc(cashSessionsCollection, {
+        status: "open",
+        openingAmount,
+        openedAt: serverTimestamp(),
+        openedByName: authState.name,
+        openedByEmail: authState.email,
+      });
+
+      setOpeningAmountText("0,00");
+      setNoticeMessage("Caixa aberto com sucesso.");
+    } catch (error) {
+      console.error(error);
+      setNoticeMessage("Nao foi possivel abrir o caixa agora.");
+    } finally {
+      setOpeningSession(false);
+    }
+  }
+
+  async function handleCloseSession() {
+    if (!activeSession) {
+      setNoticeMessage("Nao existe caixa aberto para fechar.");
+      return;
+    }
+
+    setClosingSession(true);
+
+    try {
+      const sessionRef = doc(db, "cashSessions", activeSession.id);
+
+      await updateDoc(sessionRef, {
+        status: "closed",
+        closedAt: serverTimestamp(),
+        closedByName: authState.name,
+        closedByEmail: authState.email,
+        sessionOrdersCount: sessionOrders.length,
+        sessionCashSalesCount: sessionCashSales.length,
+        onlineOrdersTotal: sessionOnlineTotals.total,
+        cashSalesTotal: sessionCashSaleTotals.total,
+        moneyPaymentsTotal: sessionOnlineTotals.cash + sessionCashSaleTotals.cash,
+        pixPaymentsTotal: sessionOnlineTotals.pix + sessionCashSaleTotals.pix,
+        cardPaymentsTotal: sessionOnlineTotals.card + sessionCashSaleTotals.card,
+        totalMovement: sessionMovementTotal,
+        expectedClosingBalance: currentBalance,
+      });
+
+      setSaleCart([]);
+      setPickerProduct(null);
+      setSaleForm(initialSaleForm);
+      setNoticeMessage("Caixa fechado com resumo da sessao.");
+    } catch (error) {
+      console.error(error);
+      setNoticeMessage("Nao foi possivel fechar o caixa agora.");
+    } finally {
+      setClosingSession(false);
     }
   }
 
   async function handleFinishSale() {
+    if (!activeSession) {
+      setNoticeMessage("Abra o caixa antes de registrar uma venda.");
+      return;
+    }
+
     if (saleCart.length === 0) {
       setNoticeMessage("Adicione ao menos um item antes de fechar a venda.");
       return;
@@ -406,6 +564,7 @@ export default function CashPage() {
       }));
 
       await addDoc(cashSalesCollection, {
+        sessionId: activeSession.id,
         items,
         total: saleCartTotal,
         payment: saleForm.payment,
@@ -420,7 +579,7 @@ export default function CashPage() {
       setNoticeMessage("Venda registrada no caixa com sucesso.");
     } catch (error) {
       console.error(error);
-      setNoticeMessage("Não foi possível registrar essa venda agora.");
+      setNoticeMessage("Nao foi possivel registrar essa venda agora.");
     } finally {
       setSubmittingSale(false);
     }
@@ -431,21 +590,21 @@ export default function CashPage() {
       <header className="cash-header admin-card">
         <div className="cash-brand">
           <div className="cash-logo-wrap">
-            <img src="/logo.jpeg" alt="Logo Bolo de Mãe JP Confeitaria" />
+            <img src="/logo.jpeg" alt="Logo Bolo de Mae JP Confeitaria" />
           </div>
 
           <div>
-            <p className="eyebrow">Operação interna</p>
+            <p className="eyebrow">Operacao interna</p>
             <h1>Sistema de Caixa</h1>
             <p className="cash-copy">
-              Caixa ligado ao cardápio, lendo os mesmos produtos e acompanhando os pedidos da loja.
+              Caixa ligado ao cardapio, lendo os mesmos produtos e acompanhando os pedidos da loja.
             </p>
           </div>
         </div>
 
         <div className="cash-top-actions">
           <Link className="secondary-button" href="/">
-            Ver cardápio
+            Ver cardapio
           </Link>
           <Link className="secondary-button" href="/admin">
             Gerenciar produtos
@@ -479,8 +638,8 @@ export default function CashPage() {
 
       {authState.showDenied ? (
         <section className="auth-card auth-card-danger">
-          <p className="eyebrow">Sem permissão</p>
-          <h2>Conta ainda não liberada</h2>
+          <p className="eyebrow">Sem permissao</p>
+          <h2>Conta ainda nao liberada</h2>
           <p className="auth-copy">
             A conta entrou com sucesso, mas ainda precisa estar marcada como admin no Firestore
             para operar o caixa.
@@ -492,24 +651,108 @@ export default function CashPage() {
         <div className="cash-shell">
           <div className="status-banner">{authState.status}</div>
 
-          <section className="summary-grid">
-            <article className="summary-card">
-              <span className="summary-label">Pedidos do cardápio hoje</span>
-              <strong>{todayOrders.length}</strong>
-              <small>{formatPrice(onlineTotal)}</small>
-            </article>
+          <section className="admin-card cash-session-panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Sessao de caixa</p>
+                <h2>{activeSession ? "Caixa aberto" : "Abrir caixa"}</h2>
+              </div>
+              <span className="pill">
+                {sessionsLoading ? "Carregando..." : activeSession ? "Sessao ativa" : "Caixa fechado"}
+              </span>
+            </div>
 
-            <article className="summary-card">
-              <span className="summary-label">Vendas do caixa hoje</span>
-              <strong>{todayCashSales.length}</strong>
-              <small>{formatPrice(cashTotal)}</small>
-            </article>
+            {activeSession ? (
+              <div className="cash-session-grid">
+                <div className="cash-session-card">
+                  <span className="summary-label">Aberto por</span>
+                  <strong>{activeSession.openedByName || "Admin"}</strong>
+                  <small>{activeSession.openedByEmail || "Sem email"}</small>
+                  <small>{formatDateTime(activeSession.openedAt)}</small>
+                </div>
 
-            <article className="summary-card">
-              <span className="summary-label">Movimento total do dia</span>
-              <strong>{todayOrders.length + todayCashSales.length}</strong>
-              <small>{formatPrice(onlineTotal + cashTotal)}</small>
-            </article>
+                <div className="cash-session-card">
+                  <span className="summary-label">Valor inicial</span>
+                  <strong>{formatPrice(Number(activeSession.openingAmount || 0))}</strong>
+                  <small>Fundo inicial do caixa</small>
+                </div>
+
+                <div className="cash-session-card cash-session-card-highlight">
+                  <span className="summary-label">Saldo atual esperado</span>
+                  <strong>{formatPrice(currentBalance)}</strong>
+                  <small>Valor inicial + vendas em dinheiro</small>
+                </div>
+              </div>
+            ) : (
+              <div className="cash-open-box">
+                <label className="cash-open-label">
+                  Valor inicial
+                  <input
+                    type="text"
+                    value={openingAmountText}
+                    onChange={(event) => setOpeningAmountText(event.target.value)}
+                    placeholder="0,00"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  className="modal-add"
+                  onClick={handleOpenSession}
+                  disabled={openingSession}
+                >
+                  {openingSession ? "Abrindo..." : "Abrir caixa"}
+                </button>
+              </div>
+            )}
+
+            {activeSession ? (
+              <div className="cash-close-summary">
+                <div className="summary-grid summary-grid-compact">
+                  <article className="summary-card">
+                    <span className="summary-label">Pedidos na sessao</span>
+                    <strong>{sessionOrders.length}</strong>
+                    <small>{formatPrice(sessionOnlineTotals.total)}</small>
+                  </article>
+
+                  <article className="summary-card">
+                    <span className="summary-label">Vendas no caixa</span>
+                    <strong>{sessionCashSales.length}</strong>
+                    <small>{formatPrice(sessionCashSaleTotals.total)}</small>
+                  </article>
+
+                  <article className="summary-card">
+                    <span className="summary-label">Movimento da sessao</span>
+                    <strong>{formatPrice(sessionMovementTotal)}</strong>
+                    <small>Total entre online e presencial</small>
+                  </article>
+                </div>
+
+                <div className="cash-payments-grid">
+                  <div className="cash-payment-chip">
+                    <span>Dinheiro</span>
+                    <strong>{formatPrice(sessionOnlineTotals.cash + sessionCashSaleTotals.cash)}</strong>
+                  </div>
+                  <div className="cash-payment-chip">
+                    <span>Pix</span>
+                    <strong>{formatPrice(sessionOnlineTotals.pix + sessionCashSaleTotals.pix)}</strong>
+                  </div>
+                  <div className="cash-payment-chip">
+                    <span>Cartao</span>
+                    <strong>{formatPrice(sessionOnlineTotals.card + sessionCashSaleTotals.card)}</strong>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleCloseSession}
+                  disabled={closingSession}
+                >
+                  {closingSession ? "Fechando..." : "Fechar caixa com resumo"}
+                </button>
+              </div>
+            ) : null}
           </section>
 
           <div className="cash-layout">
@@ -519,7 +762,9 @@ export default function CashPage() {
                   <p className="eyebrow">Venda manual</p>
                   <h2>Frente de caixa</h2>
                 </div>
-                <span className="pill">{productsLoading ? "Carregando produtos..." : `${products.length} itens`}</span>
+                <span className="pill">
+                  {productsLoading ? "Carregando produtos..." : `${products.length} itens`}
+                </span>
               </div>
 
               <div className="cash-form-grid">
@@ -539,12 +784,12 @@ export default function CashPage() {
                   <select name="payment" value={saleForm.payment} onChange={handleSaleFieldChange}>
                     <option value="pix">Pix</option>
                     <option value="dinheiro">Dinheiro</option>
-                    <option value="cartão">Cartão</option>
+                    <option value="cartao">Cartao</option>
                   </select>
                 </label>
 
                 <label className="full">
-                  Observações
+                  Observacoes
                   <textarea
                     rows="3"
                     name="notes"
@@ -570,7 +815,7 @@ export default function CashPage() {
                           <span>{product.title}</span>
                           <strong>{formatDisplayPrice(product.price)}</strong>
                           {Array.isArray(product.subProducts) && product.subProducts.length > 0 ? (
-                            <small>{product.subProducts.length} opções</small>
+                            <small>{product.subProducts.length} opcoes</small>
                           ) : (
                             <small>Adicionar direto</small>
                           )}
@@ -590,7 +835,6 @@ export default function CashPage() {
                 </div>
                 <span className="pill">{saleCart.reduce((sum, item) => sum + item.qty, 0)} itens</span>
               </div>
-
               {saleCart.length === 0 ? (
                 <div className="empty-state">
                   Toque nos produtos ao lado para montar a venda presencial.
@@ -626,7 +870,7 @@ export default function CashPage() {
                 type="button"
                 className="modal-add"
                 onClick={handleFinishSale}
-                disabled={submittingSale}
+                disabled={submittingSale || !activeSession}
               >
                 {submittingSale ? "Registrando..." : "Fechar venda no caixa"}
               </button>
@@ -637,31 +881,31 @@ export default function CashPage() {
             <section className="admin-card">
               <div className="section-heading">
                 <div>
-                  <p className="eyebrow">Integração com o cardápio</p>
-                  <h2>Pedidos recebidos hoje</h2>
+                  <p className="eyebrow">Integracao com o cardapio</p>
+                  <h2>Pedidos da sessao</h2>
                 </div>
-                <span className="pill">{ordersLoading ? "Atualizando..." : `${todayOrders.length} pedidos`}</span>
+                <span className="pill">
+                  {ordersLoading ? "Atualizando..." : `${sessionOrders.length} pedidos`}
+                </span>
               </div>
 
-              {todayOrders.length === 0 ? (
+              {sessionOrders.length === 0 ? (
                 <div className="empty-state">
-                  Nenhum pedido novo do cardápio entrou hoje até agora.
+                  Nenhum pedido do cardapio entrou durante a sessao atual.
                 </div>
               ) : (
                 <div className="order-list">
-                  {todayOrders.slice(0, 10).map((order) => (
+                  {sessionOrders.slice(0, 10).map((order) => (
                     <article className="order-card" key={order.id}>
                       <div className="order-card-top">
                         <strong>{order.customer?.name || "Cliente"}</strong>
                         <span>{formatDateTime(order.createdAt)}</span>
                       </div>
                       <small>
-                        {order.items?.length || 0} itens • {order.customer?.payment || "Pagamento não informado"}
+                        {order.items?.length || 0} itens - {order.customer?.payment || "Sem pagamento"}
                       </small>
                       <p className="order-card-lines">
-                        {(order.items || [])
-                          .map((item) => `${item.qty}x ${item.title}`)
-                          .join(" • ")}
+                        {(order.items || []).map((item) => `${item.qty}x ${item.title}`).join(" - ")}
                       </p>
                       <div className="order-card-bottom">
                         <span>{order.customer?.phone || "Sem telefone"}</span>
@@ -676,31 +920,40 @@ export default function CashPage() {
             <section className="admin-card">
               <div className="section-heading">
                 <div>
-                  <p className="eyebrow">Resumo interno</p>
-                  <h2>Vendas lançadas no caixa</h2>
+                  <p className="eyebrow">Historico do caixa</p>
+                  <h2>Quem abriu e fechou</h2>
                 </div>
-                <span className="pill">{salesLoading ? "Atualizando..." : `${todayCashSales.length} vendas`}</span>
+                <span className="pill">
+                  {sessionsLoading ? "Atualizando..." : `${recentSessions.length} sessoes`}
+                </span>
               </div>
 
-              {todayCashSales.length === 0 ? (
-                <div className="empty-state">Nenhuma venda manual registrada hoje.</div>
+              {recentSessions.length === 0 ? (
+                <div className="empty-state">Nenhuma sessao registrada ainda.</div>
               ) : (
                 <div className="order-list">
-                  {todayCashSales.slice(0, 10).map((sale) => (
-                    <article className="order-card" key={sale.id}>
+                  {recentSessions.map((session) => (
+                    <article className="order-card" key={session.id}>
                       <div className="order-card-top">
-                        <strong>{sale.customerName || "Venda balcão"}</strong>
-                        <span>{formatDateTime(sale.createdAt)}</span>
+                        <strong>{session.status === "open" ? "Caixa aberto" : "Caixa fechado"}</strong>
+                        <span>{formatDateTime(session.openedAt)}</span>
                       </div>
-                      <small>{sale.payment || "Pagamento não informado"}</small>
+                      <small>
+                        Aberto por {session.openedByName || "Admin"} - {session.openedByEmail || "Sem email"}
+                      </small>
                       <p className="order-card-lines">
-                        {(sale.items || [])
-                          .map((item) => `${item.qty}x ${item.title}`)
-                          .join(" • ")}
+                        Valor inicial: {formatPrice(Number(session.openingAmount || 0))}
+                        {session.status === "closed"
+                          ? ` | Saldo esperado: ${formatPrice(Number(session.expectedClosingBalance || 0))}`
+                          : " | Sessao ainda em andamento"}
                       </p>
                       <div className="order-card-bottom">
-                        <span>{sale.notes || "Sem observações"}</span>
-                        <strong>{formatPrice(Number(sale.total || 0))}</strong>
+                        <span>
+                          {session.closedByName
+                            ? `Fechado por ${session.closedByName}`
+                            : "Ainda sem fechamento"}
+                        </span>
+                        <strong>{session.closedAt ? formatDateTime(session.closedAt) : "Aberto agora"}</strong>
                       </div>
                     </article>
                   ))}
@@ -721,7 +974,7 @@ export default function CashPage() {
               aria-label="Fechar"
               onClick={() => setPickerProduct(null)}
             >
-              ×
+              x
             </button>
 
             <div
@@ -741,12 +994,10 @@ export default function CashPage() {
             <div className="modal-content">
               <h3 id="cash-option-title">{pickerProduct.title}</h3>
               <p className="modal-price">{pickerProduct.price}</p>
-              <p className="modal-details">
-                Escolha a variação para lançar esse produto no caixa.
-              </p>
+              <p className="modal-details">Escolha a variacao para lancar esse produto no caixa.</p>
 
               <div className="modal-options">
-                <p className="modal-options-label">Opções disponíveis</p>
+                <p className="modal-options-label">Opcoes disponiveis</p>
                 <div className="modal-options-grid">
                   {pickerProduct.subProducts.map((subProduct) => (
                     <button
@@ -757,12 +1008,7 @@ export default function CashPage() {
                       }`}
                       onClick={() =>
                         setPickerProduct((current) =>
-                          current
-                            ? {
-                                ...current,
-                                selectedSubProduct: subProduct,
-                              }
-                            : current
+                          current ? { ...current, selectedSubProduct: subProduct } : current
                         )
                       }
                     >
@@ -784,16 +1030,13 @@ export default function CashPage() {
             >
               {pickerProduct.selectedSubProduct
                 ? `Adicionar ${pickerProduct.selectedSubProduct}`
-                : "Escolha uma opção"}
+                : "Escolha uma opcao"}
             </button>
           </div>
         ) : null}
       </div>
 
-      <div
-        className={`modal${noticeMessage ? " is-open" : ""}`}
-        aria-hidden={noticeMessage ? "false" : "true"}
-      >
+      <div className={`modal${noticeMessage ? " is-open" : ""}`} aria-hidden={noticeMessage ? "false" : "true"}>
         <div className="modal-backdrop" onClick={() => setNoticeMessage("")} />
         {noticeMessage ? (
           <div className="modal-card notice-card" role="dialog" aria-modal="true" aria-labelledby="cash-notice-title">
@@ -803,7 +1046,7 @@ export default function CashPage() {
               aria-label="Fechar"
               onClick={() => setNoticeMessage("")}
             >
-              ×
+              x
             </button>
             <div className="modal-content">
               <h3 id="cash-notice-title">Aviso</h3>

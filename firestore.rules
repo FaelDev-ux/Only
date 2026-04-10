@@ -129,6 +129,7 @@ service cloud.firestore {
 
     function validCashSalePayload() {
       return request.resource.data.keys().hasOnly([
+          'sessionId',
           'items',
           'total',
           'payment',
@@ -140,6 +141,7 @@ service cloud.firestore {
         && request.resource.data.items is list
         && request.resource.data.items.size() > 0
         && request.resource.data.items.size() <= 30
+        && validShortText(request.resource.data.sessionId, 120)
         && request.resource.data.total is number
         && request.resource.data.total >= 0
         && request.resource.data.total <= 100000
@@ -147,6 +149,69 @@ service cloud.firestore {
         && validOptionalText(request.resource.data.customerName, 120)
         && validOptionalText(request.resource.data.notes, 500)
         && request.resource.data.source == 'caixa';
+    }
+
+    function validCashSessionCreatePayload() {
+      return request.resource.data.keys().hasOnly([
+          'status',
+          'openingAmount',
+          'openedAt',
+          'openedByName',
+          'openedByEmail'
+        ])
+        && request.resource.data.status == 'open'
+        && request.resource.data.openingAmount is number
+        && request.resource.data.openingAmount >= 0
+        && request.resource.data.openingAmount <= 100000
+        && validShortText(request.resource.data.openedByName, 120)
+        && validShortText(request.resource.data.openedByEmail, 200);
+    }
+
+    function validCashSessionUpdatePayload() {
+      return request.resource.data.keys().hasOnly([
+          'status',
+          'openingAmount',
+          'openedAt',
+          'openedByName',
+          'openedByEmail',
+          'closedAt',
+          'closedByName',
+          'closedByEmail',
+          'sessionOrdersCount',
+          'sessionCashSalesCount',
+          'onlineOrdersTotal',
+          'cashSalesTotal',
+          'moneyPaymentsTotal',
+          'pixPaymentsTotal',
+          'cardPaymentsTotal',
+          'totalMovement',
+          'expectedClosingBalance'
+        ])
+        && request.resource.data.status == 'closed'
+        && request.resource.data.openingAmount == resource.data.openingAmount
+        && request.resource.data.openedAt == resource.data.openedAt
+        && request.resource.data.openedByName == resource.data.openedByName
+        && request.resource.data.openedByEmail == resource.data.openedByEmail
+        && validShortText(request.resource.data.closedByName, 120)
+        && validShortText(request.resource.data.closedByEmail, 200)
+        && request.resource.data.sessionOrdersCount is number
+        && request.resource.data.sessionOrdersCount >= 0
+        && request.resource.data.sessionCashSalesCount is number
+        && request.resource.data.sessionCashSalesCount >= 0
+        && request.resource.data.onlineOrdersTotal is number
+        && request.resource.data.onlineOrdersTotal >= 0
+        && request.resource.data.cashSalesTotal is number
+        && request.resource.data.cashSalesTotal >= 0
+        && request.resource.data.moneyPaymentsTotal is number
+        && request.resource.data.moneyPaymentsTotal >= 0
+        && request.resource.data.pixPaymentsTotal is number
+        && request.resource.data.pixPaymentsTotal >= 0
+        && request.resource.data.cardPaymentsTotal is number
+        && request.resource.data.cardPaymentsTotal >= 0
+        && request.resource.data.totalMovement is number
+        && request.resource.data.totalMovement >= 0
+        && request.resource.data.expectedClosingBalance is number
+        && request.resource.data.expectedClosingBalance >= 0;
     }
 
     match /adminUsers/{email} {
@@ -200,6 +265,12 @@ service cloud.firestore {
     match /cashSales/{saleId} {
       allow read, delete: if isAdmin();
       allow create, update: if isAdmin() && validCashSalePayload();
+    }
+
+    match /cashSessions/{sessionId} {
+      allow read, delete: if isAdmin();
+      allow create: if isAdmin() && validCashSessionCreatePayload();
+      allow update: if isAdmin() && validCashSessionUpdatePayload();
     }
   }
 }

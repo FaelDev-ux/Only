@@ -1,0 +1,26 @@
+{
+  "name": "Bolo de Mãe JP Confeitaria",
+  "short_name": "Bolo de Mãe JP",
+  "description": "Cardápio, admin e caixa da Bolo de Mãe JP Confeitaria.",
+  "lang": "pt-BR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fbf6f1",
+  "theme_color": "#6d4a3f",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -302,6 +302,7 @@ h1 {
   justify-content: center;
   padding: 24px;
   z-index: 1000;
+  overflow-y: auto;
 }
 
 .modal.is-open {
@@ -326,6 +327,9 @@ h1 {
   box-shadow: 0 18px 40px rgba(109, 74, 63, 0.2);
   display: grid;
   gap: 22px;
+  max-height: min(88vh, 900px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-card-wide {
@@ -640,6 +644,13 @@ h1 {
   box-shadow: 0 14px 28px rgba(109, 74, 63, 0.18);
   z-index: 1250;
   cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.mobile-cart-fab.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(16px);
 }
 
 .cart-header,
@@ -1149,6 +1160,77 @@ h1 {
   font-size: 1.2rem;
 }
 
+.cash-session-panel,
+.cash-close-summary {
+  display: grid;
+  gap: 16px;
+}
+
+.cash-session-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.cash-session-card,
+.cash-payment-chip {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(214, 177, 122, 0.35);
+}
+
+.cash-session-card strong,
+.cash-payment-chip strong {
+  font-size: 1.25rem;
+  color: var(--deep);
+}
+
+.cash-session-card small,
+.cash-payment-chip span {
+  color: #8b6a62;
+}
+
+.cash-session-card-highlight {
+  background: linear-gradient(135deg, #fff8f3 0%, #f4e3d6 50%, #f8efe7 100%);
+  border-color: rgba(214, 177, 122, 0.55);
+}
+
+.cash-open-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.cash-open-label {
+  display: grid;
+  gap: 6px;
+  min-width: min(280px, 100%);
+  color: #7a5a52;
+}
+
+.cash-open-label input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(214, 177, 122, 0.5);
+  background: #fffdfb;
+  color: #6d4a3f;
+}
+
+.summary-grid-compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cash-payments-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .order-list {
   display: grid;
   gap: 12px;
@@ -1217,7 +1299,10 @@ h1 {
 
   .summary-grid,
   .cash-layout,
-  .cash-product-grid {
+  .cash-product-grid,
+  .cash-session-grid,
+  .summary-grid-compact,
+  .cash-payments-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1248,6 +1333,18 @@ h1 {
 
   .toast {
     bottom: 88px;
+  }
+
+  .modal {
+    align-items: flex-start;
+    padding: 16px;
+  }
+
+  .modal-card {
+    width: min(100%, 560px);
+    margin: 12px auto;
+    max-height: calc(100vh - 24px);
+    padding: 22px 18px;
   }
 
   .hero-frame {

@@ -212,16 +212,13 @@ export default function MenuPage() {
     const shouldLockScroll = isCartOpen || isCheckoutOpen;
     const { body } = document;
     const previousOverflow = body.style.overflow;
-    const previousTouchAction = body.style.touchAction;
 
     if (shouldLockScroll) {
       body.style.overflow = "hidden";
-      body.style.touchAction = "none";
     }
 
     return () => {
       body.style.overflow = previousOverflow;
-      body.style.touchAction = previousTouchAction;
     };
   }, [isCartOpen, isCheckoutOpen]);
 
@@ -566,7 +563,13 @@ export default function MenuPage() {
         </footer>
       </div>
 
-      <button className="mobile-cart-fab" type="button" onClick={() => setIsCartOpen(true)}>
+      <button
+        className={`mobile-cart-fab${isCheckoutOpen ? " is-hidden" : ""}`}
+        type="button"
+        onClick={() => setIsCartOpen(true)}
+        aria-hidden={isCheckoutOpen ? "true" : "false"}
+        tabIndex={isCheckoutOpen ? -1 : 0}
+      >
         <span>Carrinho</span>
         <span className="cart-count">{cartCount}</span>
       </button>
