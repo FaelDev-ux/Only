@@ -5,8 +5,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   addDoc,
   collection,
-  doc,
-  getDoc,
   onSnapshot,
   query,
   serverTimestamp,
@@ -14,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
+import { isAllowedAdmin, syncUserProfile } from "../lib/access-control";
 import {
   SEND_TO_CUSTOMER,
   STORE_WHATSAPP,
@@ -22,7 +21,6 @@ import {
   fetchViaCEP,
   formatDisplayPrice,
   formatPrice,
-  getAdminDocId,
   isValidCEP,
   isValidPhone,
   maskCEP,
@@ -158,15 +156,8 @@ export default function MenuPage() {
       const firstName = (user.displayName || user.email || "Conta Google").split(" ")[0];
 
       try {
-        const adminDocId = getAdminDocId(user);
-        let isAdmin = false;
-
-        if (adminDocId) {
-          const adminRef = doc(db, "adminUsers", adminDocId);
-          const adminSnap = await getDoc(adminRef);
-          const data = adminSnap.data() || {};
-          isAdmin = adminSnap.exists() && (data.isAdmin === true || data.active === true);
-        }
+        await syncUserProfile(user);
+        const isAdmin = await isAllowedAdmin(user);
 
         setAuthState({
           loggedIn: true,

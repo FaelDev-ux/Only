@@ -6,20 +6,18 @@ import {
   addDoc,
   collection,
   doc,
-  getDoc,
   onSnapshot,
   serverTimestamp,
-  setDoc,
   updateDoc,
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
+import { isAllowedAdmin, syncUserProfile } from "../lib/access-control";
 import {
   buildGroupedProducts,
   describeAdminAuthError,
   formatDisplayPrice,
   formatPrice,
-  getAdminDocId,
   parsePrice,
 } from "../lib/store-utils";
 
@@ -128,47 +126,6 @@ function filterBySession(items, session) {
   });
 }
 
-async function ensureAdminProfile(user) {
-  const adminDocId = getAdminDocId(user);
-  if (!adminDocId) return;
-
-  const adminRef = doc(db, "adminUsers", adminDocId);
-  const adminSnap = await getDoc(adminRef);
-
-  if (!adminSnap.exists()) {
-    await setDoc(adminRef, {
-      email: adminDocId,
-      displayName: user.displayName || "",
-      photoURL: user.photoURL || "",
-      isAdmin: false,
-      createdAt: serverTimestamp(),
-      lastLoginAt: serverTimestamp(),
-    });
-    return;
-  }
-
-  await setDoc(
-    adminRef,
-    {
-      displayName: user.displayName || "",
-      photoURL: user.photoURL || "",
-      lastLoginAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
-}
-
-async function isAllowedAdmin(user) {
-  const adminDocId = getAdminDocId(user);
-  if (!adminDocId) return false;
-
-  const adminRef = doc(db, "adminUsers", adminDocId);
-  const adminSnap = await getDoc(adminRef);
-  const data = adminSnap.data() || {};
-
-  return adminSnap.exists() && (data.isAdmin === true || data.active === true);
-}
-
 export default function CashPage() {
   const [authState, setAuthState] = useState({
     loggedIn: false,
@@ -225,7 +182,7 @@ export default function CashPage() {
       });
 
       try {
-        await ensureAdminProfile(user);
+        await syncUserProfile(user);
         const allowed = await isAllowedAdmin(user);
 
         if (!allowed) {

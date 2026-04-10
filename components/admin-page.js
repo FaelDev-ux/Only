@@ -7,18 +7,16 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
   onSnapshot,
   serverTimestamp,
-  setDoc,
   updateDoc,
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
+import { isAllowedAdmin, syncUserProfile } from "../lib/access-control";
 import {
   describeAdminAuthError,
   formatDisplayPrice,
-  getAdminDocId,
 } from "../lib/store-utils";
 
 const productsCollection = collection(db, "products");
@@ -110,47 +108,6 @@ function parseSubProductsText(value) {
   return Array.from(uniqueOptions).slice(0, 20);
 }
 
-async function ensureAdminProfile(user) {
-  const adminDocId = getAdminDocId(user);
-  if (!adminDocId) return;
-
-  const adminRef = doc(db, "adminUsers", adminDocId);
-  const adminSnap = await getDoc(adminRef);
-
-  if (!adminSnap.exists()) {
-    await setDoc(adminRef, {
-      email: adminDocId,
-      displayName: user.displayName || "",
-      photoURL: user.photoURL || "",
-      isAdmin: false,
-      createdAt: serverTimestamp(),
-      lastLoginAt: serverTimestamp(),
-    });
-    return;
-  }
-
-  await setDoc(
-    adminRef,
-    {
-      displayName: user.displayName || "",
-      photoURL: user.photoURL || "",
-      lastLoginAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
-}
-
-async function isAllowedAdmin(user) {
-  const adminDocId = getAdminDocId(user);
-  if (!adminDocId) return false;
-
-  const adminRef = doc(db, "adminUsers", adminDocId);
-  const adminSnap = await getDoc(adminRef);
-  const data = adminSnap.data() || {};
-
-  return adminSnap.exists() && (data.isAdmin === true || data.active === true);
-}
-
 export default function AdminPage() {
   const [authState, setAuthState] = useState({
     loggedIn: false,
@@ -195,7 +152,7 @@ export default function AdminPage() {
       });
 
       try {
-        await ensureAdminProfile(user);
+        await syncUserProfile(user);
         const allowed = await isAllowedAdmin(user);
 
         if (!allowed) {
@@ -203,7 +160,7 @@ export default function AdminPage() {
             loggedIn: true,
             isAdmin: false,
             status:
-              "Conta registrada. Agora é só marcar isAdmin como true no Firestore para liberar o painel.",
+              "Conta registrada. Agora é só marcar isAdmin como true em users no Firestore para liberar o painel.",
             name: user.displayName || "Conta Google",
             email: user.email || "",
             showDenied: true,
@@ -471,9 +428,8 @@ export default function AdminPage() {
           <p className="eyebrow">Acesso negado</p>
           <h2>Conta sem permissão de admin</h2>
           <p className="auth-copy">
-            Essa conta Google é registrada automaticamente na coleção <code>adminUsers</code>.
-            Depois disso, basta mudar o campo <code>isAdmin</code> para <code>true</code> no
-            Firestore.
+            Essa conta Google é registrada automaticamente na coleção <code>users</code>. Depois
+            disso, basta mudar o campo <code>isAdmin</code> para <code>true</code> no Firestore.
           </p>
         </section>
       ) : null}

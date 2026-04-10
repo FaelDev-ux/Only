@@ -13,21 +13,18 @@ service cloud.firestore {
     }
 
     function adminDoc() {
-      return get(/databases/$(database)/documents/adminUsers/$(adminEmail()));
+      return get(/databases/$(database)/documents/users/$(adminEmail()));
     }
 
     function adminDocExists() {
       return adminEmail() != ""
-        && exists(/databases/$(database)/documents/adminUsers/$(adminEmail()));
+        && exists(/databases/$(database)/documents/users/$(adminEmail()));
     }
 
     function isAdmin() {
       return signedIn()
         && adminDocExists()
-        && (
-          adminDoc().data.isAdmin == true
-          || adminDoc().data.active == true
-        );
+        && adminDoc().data.isAdmin == true;
     }
 
     function validShortText(value, max) {
@@ -214,8 +211,8 @@ service cloud.firestore {
         && request.resource.data.expectedClosingBalance >= 0;
     }
 
-    match /adminUsers/{email} {
-      allow read: if signedIn() && email == adminEmail();
+    match /users/{email} {
+      allow read: if signedIn() && (email == adminEmail() || isAdmin());
 
       allow create: if signedIn()
         && email == adminEmail()
