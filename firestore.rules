@@ -110,24 +110,44 @@ service cloud.firestore {
 
     function validOrderPayload() {
       return request.resource.data.keys().hasOnly([
+          'orderCode',
           'items',
+          'subtotal',
+          'discount',
+          'surcharge',
           'total',
           'customer',
           'createdAt'
         ])
+        && validShortText(request.resource.data.orderCode, 20)
         && request.resource.data.items is list
         && request.resource.data.items.size() > 0
         && request.resource.data.items.size() <= 20
+        && request.resource.data.subtotal is number
+        && request.resource.data.subtotal >= 0
+        && request.resource.data.subtotal <= 100000
+        && request.resource.data.discount is number
+        && request.resource.data.discount >= 0
+        && request.resource.data.discount <= 100000
+        && request.resource.data.surcharge is number
+        && request.resource.data.surcharge >= 0
+        && request.resource.data.surcharge <= 100000
         && request.resource.data.total is number
         && request.resource.data.total >= 0
         && request.resource.data.total <= 100000
+        && request.resource.data.total
+          == request.resource.data.subtotal - request.resource.data.discount + request.resource.data.surcharge
         && validCustomerPayload();
     }
 
     function validCashSalePayload() {
       return request.resource.data.keys().hasOnly([
+          'orderCode',
           'sessionId',
           'items',
+          'subtotal',
+          'discount',
+          'surcharge',
           'total',
           'payment',
           'customerName',
@@ -135,13 +155,25 @@ service cloud.firestore {
           'source',
           'createdAt'
         ])
+        && validShortText(request.resource.data.orderCode, 20)
         && request.resource.data.items is list
         && request.resource.data.items.size() > 0
         && request.resource.data.items.size() <= 30
         && validShortText(request.resource.data.sessionId, 120)
+        && request.resource.data.subtotal is number
+        && request.resource.data.subtotal >= 0
+        && request.resource.data.subtotal <= 100000
+        && request.resource.data.discount is number
+        && request.resource.data.discount >= 0
+        && request.resource.data.discount <= 100000
+        && request.resource.data.surcharge is number
+        && request.resource.data.surcharge >= 0
+        && request.resource.data.surcharge <= 100000
         && request.resource.data.total is number
         && request.resource.data.total >= 0
         && request.resource.data.total <= 100000
+        && request.resource.data.total
+          == request.resource.data.subtotal - request.resource.data.discount + request.resource.data.surcharge
         && validShortText(request.resource.data.payment, 30)
         && validOptionalText(request.resource.data.customerName, 120)
         && validOptionalText(request.resource.data.notes, 500)

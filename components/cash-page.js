@@ -18,6 +18,7 @@ import {
   describeAdminAuthError,
   formatDisplayPrice,
   formatPrice,
+  generateOrderCode,
   parsePrice,
 } from "../lib/store-utils";
 
@@ -29,6 +30,8 @@ const cashSessionsCollection = collection(db, "cashSessions");
 const initialSaleForm = {
   customerName: "",
   payment: "pix",
+  discount: "",
+  surcharge: "",
   notes: "",
 };
 
@@ -361,7 +364,10 @@ export default function CashPage() {
   const sessionMovementTotal = sessionOnlineTotals.total + sessionCashSaleTotals.total;
   const sessionCashInflow = sessionOnlineTotals.cash + sessionCashSaleTotals.cash;
   const currentBalance = Number(activeSession?.openingAmount || 0) + sessionCashInflow;
-  const saleCartTotal = saleCart.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
+  const saleCartSubtotal = saleCart.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
+  const saleDiscount = Math.max(0, parsePrice(saleForm.discount || "0"));
+  const saleSurcharge = Math.max(0, parsePrice(saleForm.surcharge || "0"));
+  const saleCartTotal = Math.max(0, saleCartSubtotal - saleDiscount + saleSurcharge);
 
   function addItemToSale(item) {
     setSaleCart((current) => {
@@ -519,10 +525,15 @@ export default function CashPage() {
         qty: item.qty,
         image: item.image || "",
       }));
+      const orderCode = generateOrderCode();
 
       await addDoc(cashSalesCollection, {
+        orderCode,
         sessionId: activeSession.id,
         items,
+        subtotal: saleCartSubtotal,
+        discount: saleDiscount,
+        surcharge: saleSurcharge,
         total: saleCartTotal,
         payment: saleForm.payment,
         customerName: saleForm.customerName.trim(),
@@ -745,6 +756,28 @@ export default function CashPage() {
                   </select>
                 </label>
 
+                <label>
+                  Desconto
+                  <input
+                    type="text"
+                    name="discount"
+                    placeholder="0,00"
+                    value={saleForm.discount}
+                    onChange={handleSaleFieldChange}
+                  />
+                </label>
+
+                <label>
+                  Acrescimo
+                  <input
+                    type="text"
+                    name="surcharge"
+                    placeholder="0,00"
+                    value={saleForm.surcharge}
+                    onChange={handleSaleFieldChange}
+                  />
+                </label>
+
                 <label className="full">
                   Observacoes
                   <textarea
@@ -819,7 +852,11 @@ export default function CashPage() {
               )}
 
               <div className="cash-total-box">
-                <span>Total da venda</span>
+                <div className="cash-total-lines">
+                  <span>Subtotal: {formatPrice(saleCartSubtotal)}</span>
+                  <span>Desconto: {formatPrice(saleDiscount)}</span>
+                  <span>Acrescimo: {formatPrice(saleSurcharge)}</span>
+                </div>
                 <strong>{formatPrice(saleCartTotal)}</strong>
               </div>
 
@@ -855,7 +892,10 @@ export default function CashPage() {
                   {sessionOrders.slice(0, 10).map((order) => (
                     <article className="order-card" key={order.id}>
                       <div className="order-card-top">
-                        <strong>{order.customer?.name || "Cliente"}</strong>
+                        <strong>
+                          #{order.orderCode || String(order.id || "").slice(0, 8).toUpperCase()} -{" "}
+                          {order.customer?.name || "Cliente"}
+                        </strong>
                         <span>{formatDateTime(order.createdAt)}</span>
                       </div>
                       <small>
@@ -868,6 +908,13 @@ export default function CashPage() {
                         <span>{order.customer?.phone || "Sem telefone"}</span>
                         <strong>{formatPrice(Number(order.total || 0))}</strong>
                       </div>
+                      {(Number(order.discount || 0) > 0 || Number(order.surcharge || 0) > 0) ? (
+                        <small>
+                          Subtotal: {formatPrice(Number(order.subtotal || order.total || 0))} | Desconto:{" "}
+                          {formatPrice(Number(order.discount || 0))} | Acrescimo:{" "}
+                          {formatPrice(Number(order.surcharge || 0))}
+                        </small>
+                      ) : null}
                     </article>
                   ))}
                 </div>

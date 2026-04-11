@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
-  addDoc,
   collection,
+  doc,
   onSnapshot,
   query,
   serverTimestamp,
+  setDoc,
   where,
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
@@ -21,6 +22,7 @@ import {
   fetchViaCEP,
   formatDisplayPrice,
   formatPrice,
+  generateOrderCode,
   isValidCEP,
   isValidPhone,
   maskCEP,
@@ -381,8 +383,15 @@ export default function MenuPage() {
         state: viaCepData.uf || "",
       };
 
-      await addDoc(ordersCollection, {
+      const orderRef = doc(ordersCollection);
+      const orderCode = generateOrderCode();
+
+      await setDoc(orderRef, {
+        orderCode,
         items,
+        subtotal: totalValue,
+        discount: 0,
+        surcharge: 0,
         total: totalValue,
         customer,
         createdAt: serverTimestamp(),
@@ -390,6 +399,7 @@ export default function MenuPage() {
 
       const messageLines = [
         "Novo pedido - Bolo de Mãe JP Confeitaria",
+        `Pedido: #${orderCode}`,
         "",
         "Itens:",
         ...items.map((item) => `- ${item.qty}x ${item.title} (${item.price})`),
