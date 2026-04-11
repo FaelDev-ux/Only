@@ -114,6 +114,7 @@ export default function MenuPage() {
   const [authState, setAuthState] = useState({
     loggedIn: false,
     name: "",
+    email: "",
     isAdmin: false,
   });
   const toastTimeoutRef = useRef(null);
@@ -148,8 +149,10 @@ export default function MenuPage() {
         setAuthState({
           loggedIn: false,
           name: "",
+          email: "",
           isAdmin: false,
         });
+        setCheckoutData(initialCheckoutState);
         return;
       }
 
@@ -162,6 +165,7 @@ export default function MenuPage() {
         setAuthState({
           loggedIn: true,
           name: firstName,
+          email: user.email || "",
           isAdmin,
         });
       } catch (error) {
@@ -169,6 +173,7 @@ export default function MenuPage() {
         setAuthState({
           loggedIn: true,
           name: firstName,
+          email: user.email || "",
           isAdmin: false,
         });
       }
