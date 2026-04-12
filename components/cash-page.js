@@ -12,7 +12,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
-import { isAllowedAdmin, syncUserProfile } from "../lib/access-control";
+import { subscribeToUserAccess, syncUserProfile } from "../lib/access-control";
 import {
   buildGroupedProducts,
   describeAdminAuthError,
@@ -265,7 +265,10 @@ export default function CashPage() {
   const [selectedHistorySessionId, setSelectedHistorySessionId] = useState("");
 
   useEffect(() => {
+    let unsubscribeAccess = () => {};
+
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      unsubscribeAccess();
       setProducts([]);
       setOrders([]);
       setCashSales([]);
@@ -294,28 +297,6 @@ export default function CashPage() {
 
       try {
         await syncUserProfile(user);
-        const allowed = await isAllowedAdmin(user);
-
-        if (!allowed) {
-          setAuthState({
-            loggedIn: true,
-            isAdmin: false,
-            status: "Essa conta ainda nao foi liberada para o caixa.",
-            name: user.displayName || "Conta Google",
-            email: user.email || "",
-            showDenied: true,
-          });
-          return;
-        }
-
-        setAuthState({
-          loggedIn: true,
-          isAdmin: true,
-          status: "Caixa pronto para uso.",
-          name: user.displayName || "Conta Google",
-          email: user.email || "",
-          showDenied: false,
-        });
       } catch (error) {
         console.error(error);
         setAuthState({
@@ -326,10 +307,34 @@ export default function CashPage() {
           email: user.email || "",
           showDenied: true,
         });
+        return;
       }
+
+      unsubscribeAccess = subscribeToUserAccess(user, (access) => {
+        const isBlocked = access.disabled;
+        const allowed = access.canAccessCashPanel;
+
+        setAuthState({
+          loggedIn: true,
+          isAdmin: access.isAdmin,
+          status: isBlocked
+            ? "Essa conta foi desativada no painel."
+            : allowed
+              ? "Caixa pronto para uso."
+              : "Essa conta ainda nao foi liberada para o caixa.",
+          name: user.displayName || "Conta Google",
+          email: user.email || "",
+          showDenied: isBlocked || !allowed,
+        });
+      });
     });
 
-    return unsubscribeAuth;
+    return () => {
+      unsubscribeAccess();
+      if (typeof unsubscribeAuth === "function") {
+        unsubscribeAuth();
+      }
+    };
   }, []);
 
   useEffect(() => {

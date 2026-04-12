@@ -21,10 +21,27 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(adminEmail()));
     }
 
+    function currentUserDisabled() {
+      return signedIn()
+        && adminDocExists()
+        && adminDoc().data.disabled == true;
+    }
+
     function isAdmin() {
       return signedIn()
         && adminDocExists()
+        && !currentUserDisabled()
         && adminDoc().data.isAdmin == true;
+    }
+
+    function canAccessCash() {
+      return signedIn()
+        && adminDocExists()
+        && !currentUserDisabled()
+        && (
+          adminDoc().data.isAdmin == true
+          || adminDoc().data.canAccessCash == true
+        );
     }
 
     function validShortText(value, max) {
@@ -33,6 +50,11 @@ service cloud.firestore {
 
     function validOptionalText(value, max) {
       return !(value is string) || value.size() <= max;
+    }
+
+    function validPaymentValue(value) {
+      return value is string
+        && value in ['pix', 'dinheiro', 'cartao'];
     }
 
     function validImageField(value) {
@@ -97,7 +119,7 @@ service cloud.firestore {
         ])
         && validShortText(request.resource.data.customer.name, 120)
         && validShortText(request.resource.data.customer.phone, 20)
-        && validShortText(request.resource.data.customer.payment, 30)
+        && validPaymentValue(request.resource.data.customer.payment)
         && validShortText(request.resource.data.customer.cep, 10)
         && validShortText(request.resource.data.customer.address, 180)
         && validShortText(request.resource.data.customer.addressNumber, 20)
@@ -109,7 +131,7 @@ service cloud.firestore {
     }
 
     function validOrderPayload() {
-      return request.resource.data.keys().hasOnly([
+        return request.resource.data.keys().hasOnly([
           'orderCode',
           'items',
           'subtotal',
@@ -174,7 +196,7 @@ service cloud.firestore {
         && request.resource.data.total <= 100000
         && request.resource.data.total
           == request.resource.data.subtotal - request.resource.data.discount + request.resource.data.surcharge
-        && validShortText(request.resource.data.payment, 30)
+        && validPaymentValue(request.resource.data.payment)
         && validOptionalText(request.resource.data.customerName, 120)
         && validOptionalText(request.resource.data.notes, 500)
         && request.resource.data.source == 'caixa';
@@ -193,7 +215,8 @@ service cloud.firestore {
         && request.resource.data.openingAmount >= 0
         && request.resource.data.openingAmount <= 100000
         && validShortText(request.resource.data.openedByName, 120)
-        && validShortText(request.resource.data.openedByEmail, 200);
+        && validShortText(request.resource.data.openedByEmail, 200)
+        && request.resource.data.openedByEmail == adminEmail();
     }
 
     function validCashSessionUpdatePayload() {
@@ -223,6 +246,7 @@ service cloud.firestore {
         && request.resource.data.openedByEmail == resource.data.openedByEmail
         && validShortText(request.resource.data.closedByName, 120)
         && validShortText(request.resource.data.closedByEmail, 200)
+        && request.resource.data.closedByEmail == adminEmail()
         && request.resource.data.sessionOrdersCount is number
         && request.resource.data.sessionOrdersCount >= 0
         && request.resource.data.sessionCashSalesCount is number
@@ -253,11 +277,15 @@ service cloud.firestore {
           'displayName',
           'photoURL',
           'isAdmin',
+          'canAccessCash',
+          'disabled',
           'createdAt',
           'lastLoginAt'
         ])
         && request.resource.data.email == adminEmail()
         && request.resource.data.isAdmin == false
+        && request.resource.data.canAccessCash == false
+        && request.resource.data.disabled == false
         && validOptionalText(request.resource.data.displayName, 120)
         && validOptionalText(request.resource.data.photoURL, 2000);
 
@@ -268,11 +296,15 @@ service cloud.firestore {
           'displayName',
           'photoURL',
           'isAdmin',
+          'canAccessCash',
+          'disabled',
           'createdAt',
           'lastLoginAt'
         ])
         && request.resource.data.email == resource.data.email
         && request.resource.data.isAdmin == resource.data.isAdmin
+        && request.resource.data.canAccessCash == resource.data.canAccessCash
+        && request.resource.data.disabled == resource.data.disabled
         && request.resource.data.createdAt == resource.data.createdAt
         && validOptionalText(request.resource.data.displayName, 120)
         && validOptionalText(request.resource.data.photoURL, 2000);
@@ -281,25 +313,28 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      allow read: if isAdmin() || resource.data.available == true;
+      allow read: if canAccessCash() || resource.data.available == true;
       allow create, update: if isAdmin() && validProductPayload();
       allow delete: if isAdmin();
     }
 
     match /orders/{orderId} {
       allow create: if validOrderPayload();
-      allow read, update, delete: if isAdmin();
+      allow read: if canAccessCash();
+      allow update, delete: if isAdmin();
     }
 
     match /cashSales/{saleId} {
-      allow read, delete: if isAdmin();
-      allow create, update: if isAdmin() && validCashSalePayload();
+      allow read: if canAccessCash();
+      allow delete: if isAdmin();
+      allow create, update: if canAccessCash() && validCashSalePayload();
     }
 
     match /cashSessions/{sessionId} {
-      allow read, delete: if isAdmin();
-      allow create: if isAdmin() && validCashSessionCreatePayload();
-      allow update: if isAdmin() && validCashSessionUpdatePayload();
+      allow read: if canAccessCash();
+      allow delete: if isAdmin();
+      allow create: if canAccessCash() && validCashSessionCreatePayload();
+      allow update: if canAccessCash() && validCashSessionUpdatePayload();
     }
   }
 }

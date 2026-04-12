@@ -13,7 +13,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
-import { isAllowedAdmin, syncUserProfile } from "../lib/access-control";
+import { subscribeToUserAccess, syncUserProfile } from "../lib/access-control";
 import {
   describeAdminAuthError,
   formatDisplayPrice,
@@ -139,7 +139,10 @@ export default function AdminPage() {
   const [editingProductId, setEditingProductId] = useState("");
 
   useEffect(() => {
+    let unsubscribeAccess = () => {};
+
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      unsubscribeAccess();
       setProducts([]);
       setProductsLoading(false);
 
@@ -166,29 +169,6 @@ export default function AdminPage() {
 
       try {
         await syncUserProfile(user);
-        const allowed = await isAllowedAdmin(user);
-
-        if (!allowed) {
-          setAuthState({
-            loggedIn: true,
-            isAdmin: false,
-            status:
-              "Conta registrada. Agora e so marcar isAdmin como true em users no Firestore para liberar o painel.",
-            name: user.displayName || "Conta Google",
-            email: user.email || "",
-            showDenied: true,
-          });
-          return;
-        }
-
-        setAuthState({
-          loggedIn: true,
-          isAdmin: true,
-          status: "Acesso liberado.",
-          name: user.displayName || "Conta Google",
-          email: user.email || "",
-          showDenied: false,
-        });
       } catch (error) {
         console.error(error);
         setAuthState({
@@ -199,10 +179,34 @@ export default function AdminPage() {
           email: user.email || "",
           showDenied: true,
         });
+        return;
       }
+
+      unsubscribeAccess = subscribeToUserAccess(user, (access) => {
+        const isBlocked = access.disabled;
+        const allowed = access.canAccessAdminPanel;
+
+        setAuthState({
+          loggedIn: true,
+          isAdmin: allowed,
+          status: isBlocked
+            ? "Essa conta foi desativada no painel."
+            : allowed
+              ? "Acesso liberado."
+              : "Conta registrada. Agora e so marcar isAdmin como true em users no Firestore para liberar o painel.",
+          name: user.displayName || "Conta Google",
+          email: user.email || "",
+          showDenied: isBlocked || !allowed,
+        });
+      });
     });
 
-    return unsubscribeAuth;
+    return () => {
+      unsubscribeAccess();
+      if (typeof unsubscribeAuth === "function") {
+        unsubscribeAuth();
+      }
+    };
   }, []);
 
   useEffect(() => {

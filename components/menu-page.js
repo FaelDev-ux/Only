@@ -13,7 +13,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
-import { isAllowedAdmin, syncUserProfile } from "../lib/access-control";
+import { getUserAccessProfile, syncUserProfile } from "../lib/access-control";
 import {
   SEND_TO_CUSTOMER,
   STORE_WHATSAPP,
@@ -118,6 +118,7 @@ export default function MenuPage() {
     name: "",
     email: "",
     isAdmin: false,
+    canAccessCash: false,
   });
   const toastTimeoutRef = useRef(null);
 
@@ -153,6 +154,7 @@ export default function MenuPage() {
           name: "",
           email: "",
           isAdmin: false,
+          canAccessCash: false,
         });
         setCheckoutData(initialCheckoutState);
         return;
@@ -160,25 +162,27 @@ export default function MenuPage() {
 
       const firstName = (user.displayName || user.email || "Conta Google").split(" ")[0];
 
-      try {
-        await syncUserProfile(user);
-        const isAdmin = await isAllowedAdmin(user);
+        try {
+          await syncUserProfile(user);
+          const access = await getUserAccessProfile(user);
 
-        setAuthState({
-          loggedIn: true,
-          name: firstName,
-          email: user.email || "",
-          isAdmin,
-        });
-      } catch (error) {
-        console.error(error);
-        setAuthState({
-          loggedIn: true,
-          name: firstName,
-          email: user.email || "",
-          isAdmin: false,
-        });
-      }
+          setAuthState({
+            loggedIn: true,
+            name: firstName,
+            email: user.email || "",
+            isAdmin: access.canAccessAdminPanel,
+            canAccessCash: access.canAccessCashPanel,
+          });
+        } catch (error) {
+          console.error(error);
+          setAuthState({
+            loggedIn: true,
+            name: firstName,
+            email: user.email || "",
+            isAdmin: false,
+            canAccessCash: false,
+          });
+        }
     });
 
     return unsubscribe;
@@ -476,16 +480,20 @@ export default function MenuPage() {
                 </div>
               ) : null}
 
-              {authState.loggedIn && authState.isAdmin ? (
-                <>
-                  <Link className="manage-link" href="/admin">
-                    Gerenciar produtos
-                  </Link>
-                  <Link className="manage-link" href="/caixa">
-                    Abrir caixa
-                  </Link>
-                </>
-              ) : null}
+                {authState.loggedIn && (authState.isAdmin || authState.canAccessCash) ? (
+                  <>
+                    {authState.isAdmin ? (
+                      <Link className="manage-link" href="/admin">
+                        Gerenciar produtos
+                      </Link>
+                    ) : null}
+                    {authState.canAccessCash ? (
+                      <Link className="manage-link" href="/caixa">
+                        Abrir caixa
+                      </Link>
+                    ) : null}
+                  </>
+                ) : null}
             </div>
 
             <div className="logo-wrap">
