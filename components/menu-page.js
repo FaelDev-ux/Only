@@ -569,13 +569,13 @@ export default function MenuPage() {
         </footer>
       </div>
 
-      <button
-        className={`mobile-cart-fab${isCheckoutOpen ? " is-hidden" : ""}`}
-        type="button"
-        onClick={() => setIsCartOpen(true)}
-        aria-hidden={isCheckoutOpen ? "true" : "false"}
-        tabIndex={isCheckoutOpen ? -1 : 0}
-      >
+        <button
+          className={`mobile-cart-fab${isCheckoutOpen || modalProduct ? " is-hidden" : ""}`}
+          type="button"
+          onClick={() => setIsCartOpen(true)}
+          aria-hidden={isCheckoutOpen || modalProduct ? "true" : "false"}
+          tabIndex={isCheckoutOpen || modalProduct ? -1 : 0}
+        >
         <span>Carrinho</span>
         <span className="cart-count">{cartCount}</span>
       </button>
