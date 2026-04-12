@@ -58,6 +58,19 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function formatFullDateTime(value) {
+  const date = getDocDate(value);
+  if (!date) return "Agora";
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function normalizeSubProducts(subProducts) {
   if (!Array.isArray(subProducts)) return [];
 
@@ -129,7 +142,101 @@ function filterBySession(items, session) {
   });
 }
 
+function filterByToday(items) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const end = start + 24 * 60 * 60 * 1000;
+
+  return items.filter((item) => {
+    const createdAt = getDocTime(item.createdAt);
+    return createdAt >= start && createdAt < end;
+  });
+}
+
+function buildSoldItemsSummary(records) {
+  const summary = new Map();
+
+  records.forEach((record) => {
+    (record.items || []).forEach((item) => {
+      const title = String(item?.title || "Item sem nome").trim();
+      if (!title) return;
+
+      const qty = Number(item?.qty || 0) || 0;
+      const lineTotal = parsePrice(item?.price || 0) * qty;
+      const current = summary.get(title) || {
+        title,
+        qty: 0,
+        total: 0,
+      };
+
+      current.qty += qty;
+      current.total += lineTotal;
+      summary.set(title, current);
+    });
+  });
+
+  return Array.from(summary.values()).sort((a, b) => {
+    if (b.qty !== a.qty) return b.qty - a.qty;
+    return b.total - a.total;
+  });
+}
+
+function buildSessionDetails(session, orders, cashSales) {
+  if (!session) return null;
+
+  const sessionOrders = filterBySession(orders, session);
+  const sessionCashSales = filterBySession(cashSales, session);
+  const onlineTotals = sumByPayment(
+    sessionOrders,
+    (item) => item.customer?.payment,
+    (item) => item.total
+  );
+  const manualTotals = sumByPayment(
+    sessionCashSales,
+    (item) => item.payment,
+    (item) => item.total
+  );
+  const movements = [
+    ...sessionOrders.map((item) => ({
+      id: item.id,
+      type: "Pedido online",
+      orderCode: item.orderCode || String(item.id || "").slice(0, 8).toUpperCase(),
+      customerName: item.customer?.name || "Cliente",
+      payment: item.customer?.payment || "Sem pagamento",
+      total: Number(item.total || 0),
+      createdAt: item.createdAt,
+      items: item.items || [],
+    })),
+    ...sessionCashSales.map((item) => ({
+      id: item.id,
+      type: "Venda no caixa",
+      orderCode: item.orderCode || String(item.id || "").slice(0, 8).toUpperCase(),
+      customerName: item.customerName || "Balcao",
+      payment: item.payment || "Sem pagamento",
+      total: Number(item.total || 0),
+      createdAt: item.createdAt,
+      items: item.items || [],
+    })),
+  ].sort((a, b) => getDocTime(b.createdAt) - getDocTime(a.createdAt));
+
+  const soldItems = buildSoldItemsSummary([...sessionOrders, ...sessionCashSales]);
+  const totalMovement = onlineTotals.total + manualTotals.total;
+  const cashTotal = onlineTotals.cash + manualTotals.cash;
+
+  return {
+    sessionOrders,
+    sessionCashSales,
+    onlineTotals,
+    manualTotals,
+    movements,
+    soldItems,
+    totalMovement,
+    cashTotal,
+  };
+}
+
 export default function CashPage() {
+  const [activeSection, setActiveSection] = useState("dashboard");
   const [authState, setAuthState] = useState({
     loggedIn: false,
     isAdmin: false,
@@ -155,6 +262,7 @@ export default function CashPage() {
   const [openingSession, setOpeningSession] = useState(false);
   const [closingSession, setClosingSession] = useState(false);
   const [noticeMessage, setNoticeMessage] = useState("");
+  const [selectedHistorySessionId, setSelectedHistorySessionId] = useState("");
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
@@ -347,7 +455,7 @@ export default function CashPage() {
     () => cashSessions.find((session) => session.status === "open") || null,
     [cashSessions]
   );
-  const recentSessions = useMemo(() => cashSessions.slice(0, 6), [cashSessions]);
+  const recentSessions = useMemo(() => cashSessions.slice(0, 8), [cashSessions]);
   const sessionOrders = useMemo(() => filterBySession(orders, activeSession), [orders, activeSession]);
   const sessionCashSales = useMemo(
     () => filterBySession(cashSales, activeSession),
@@ -368,6 +476,59 @@ export default function CashPage() {
   const saleDiscount = Math.max(0, parsePrice(saleForm.discount || "0"));
   const saleSurcharge = Math.max(0, parsePrice(saleForm.surcharge || "0"));
   const saleCartTotal = Math.max(0, saleCartSubtotal - saleDiscount + saleSurcharge);
+
+  const todayOrders = useMemo(() => filterByToday(orders), [orders]);
+  const todayCashSales = useMemo(() => filterByToday(cashSales), [cashSales]);
+  const todayOnlineTotals = useMemo(
+    () => sumByPayment(todayOrders, (item) => item.customer?.payment, (item) => item.total),
+    [todayOrders]
+  );
+  const todayCashTotals = useMemo(
+    () => sumByPayment(todayCashSales, (item) => item.payment, (item) => item.total),
+    [todayCashSales]
+  );
+  const todayTotalMovement = todayOnlineTotals.total + todayCashTotals.total;
+  const todayOrdersCount = todayOrders.length + todayCashSales.length;
+  const todayAverageTicket = todayOrdersCount > 0 ? todayTotalMovement / todayOrdersCount : 0;
+  const todaySoldItems = useMemo(
+    () => buildSoldItemsSummary([...todayOrders, ...todayCashSales]).slice(0, 8),
+    [todayOrders, todayCashSales]
+  );
+  const todayRecentMovements = useMemo(
+    () =>
+      [
+        ...todayOrders.map((item) => ({
+          id: item.id,
+          type: "Pedido online",
+          customerName: item.customer?.name || "Cliente",
+          payment: item.customer?.payment || "Sem pagamento",
+          total: Number(item.total || 0),
+          createdAt: item.createdAt,
+          orderCode: item.orderCode || String(item.id || "").slice(0, 8).toUpperCase(),
+        })),
+        ...todayCashSales.map((item) => ({
+          id: item.id,
+          type: "Venda no caixa",
+          customerName: item.customerName || "Balcao",
+          payment: item.payment || "Sem pagamento",
+          total: Number(item.total || 0),
+          createdAt: item.createdAt,
+          orderCode: item.orderCode || String(item.id || "").slice(0, 8).toUpperCase(),
+        })),
+      ]
+        .sort((a, b) => getDocTime(b.createdAt) - getDocTime(a.createdAt))
+        .slice(0, 10),
+    [todayCashSales, todayOrders]
+  );
+
+  const selectedHistorySession = useMemo(
+    () => cashSessions.find((session) => session.id === selectedHistorySessionId) || null,
+    [cashSessions, selectedHistorySessionId]
+  );
+  const selectedHistoryDetails = useMemo(
+    () => buildSessionDetails(selectedHistorySession, orders, cashSales),
+    [selectedHistorySession, orders, cashSales]
+  );
 
   function addItemToSale(item) {
     setSaleCart((current) => {
@@ -723,155 +884,310 @@ export default function CashPage() {
             ) : null}
           </section>
 
-          <div className="cash-layout">
-            <section className="admin-card sales-builder">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Venda manual</p>
-                  <h2>Frente de caixa</h2>
-                </div>
-                <span className="pill">
-                  {productsLoading ? "Carregando produtos..." : `${products.length} itens`}
-                </span>
-              </div>
+          <section className="admin-card cash-sections-card">
+            <div className="cash-section-tabs">
+              <button
+                type="button"
+                className={`cash-section-tab${activeSection === "dashboard" ? " is-active" : ""}`}
+                onClick={() => setActiveSection("dashboard")}
+              >
+                Dashboard do dia
+              </button>
+              <button
+                type="button"
+                className={`cash-section-tab${activeSection === "sales" ? " is-active" : ""}`}
+                onClick={() => setActiveSection("sales")}
+              >
+                Frente de caixa
+              </button>
+              <button
+                type="button"
+                className={`cash-section-tab${activeSection === "orders" ? " is-active" : ""}`}
+                onClick={() => setActiveSection("orders")}
+              >
+                Pedidos do cardapio
+              </button>
+              <button
+                type="button"
+                className={`cash-section-tab${activeSection === "history" ? " is-active" : ""}`}
+                onClick={() => setActiveSection("history")}
+              >
+                Historico do caixa
+              </button>
+            </div>
+          </section>
 
-              <div className="cash-form-grid">
-                <label>
-                  Cliente
-                  <input
-                    type="text"
-                    name="customerName"
-                    placeholder="Opcional"
-                    value={saleForm.customerName}
-                    onChange={handleSaleFieldChange}
-                  />
-                </label>
-
-                <label>
-                  Pagamento
-                  <select name="payment" value={saleForm.payment} onChange={handleSaleFieldChange}>
-                    <option value="pix">Pix</option>
-                    <option value="dinheiro">Dinheiro</option>
-                    <option value="cartao">Cartao</option>
-                  </select>
-                </label>
-
-                <label>
-                  Desconto
-                  <input
-                    type="text"
-                    name="discount"
-                    placeholder="0,00"
-                    value={saleForm.discount}
-                    onChange={handleSaleFieldChange}
-                  />
-                </label>
-
-                <label>
-                  Acrescimo
-                  <input
-                    type="text"
-                    name="surcharge"
-                    placeholder="0,00"
-                    value={saleForm.surcharge}
-                    onChange={handleSaleFieldChange}
-                  />
-                </label>
-
-                <label className="full">
-                  Observacoes
-                  <textarea
-                    rows="3"
-                    name="notes"
-                    placeholder="Ex.: venda presencial, encomenda retirada, troco para 100..."
-                    value={saleForm.notes}
-                    onChange={handleSaleFieldChange}
-                  />
-                </label>
-              </div>
-
-              <div className="cash-product-groups">
-                {groupedProducts.map(({ category, products: categoryProducts }) => (
-                  <div key={category} className="cash-category-block">
-                    <h3>{category}</h3>
-                    <div className="cash-product-grid">
-                      {categoryProducts.map((product) => (
-                        <button
-                          key={product.id}
-                          type="button"
-                          className="cash-product-button"
-                          onClick={() => handleAddProduct(product)}
-                        >
-                          <span>{product.title}</span>
-                          <strong>{formatDisplayPrice(product.price)}</strong>
-                          {Array.isArray(product.subProducts) && product.subProducts.length > 0 ? (
-                            <small>{product.subProducts.length} opcoes</small>
-                          ) : (
-                            <small>Adicionar direto</small>
-                          )}
-                        </button>
-                      ))}
-                    </div>
+          {activeSection === "dashboard" ? (
+            <div className="cash-dashboard-layout">
+              <section className="admin-card">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Resumo geral</p>
+                    <h2>Dashboard do dia</h2>
                   </div>
-                ))}
-              </div>
-            </section>
+                  <span className="pill">
+                    {ordersLoading || salesLoading ? "Atualizando..." : `${todayOrdersCount} movimentos`}
+                  </span>
+                </div>
 
-            <section className="admin-card sales-cart-card">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Venda atual</p>
-                  <h2>Carrinho do caixa</h2>
+                <div className="cash-dashboard-grid">
+                  <article className="summary-card">
+                    <span className="summary-label">Total vendido hoje</span>
+                    <strong>{formatPrice(todayTotalMovement)}</strong>
+                    <small>Online + presencial</small>
+                  </article>
+
+                  <article className="summary-card">
+                    <span className="summary-label">Ticket medio</span>
+                    <strong>{formatPrice(todayAverageTicket)}</strong>
+                    <small>Media por pedido ou venda</small>
+                  </article>
+
+                  <article className="summary-card">
+                    <span className="summary-label">Pedidos online</span>
+                    <strong>{todayOrders.length}</strong>
+                    <small>{formatPrice(todayOnlineTotals.total)}</small>
+                  </article>
+
+                  <article className="summary-card">
+                    <span className="summary-label">Vendas no caixa</span>
+                    <strong>{todayCashSales.length}</strong>
+                    <small>{formatPrice(todayCashTotals.total)}</small>
+                  </article>
                 </div>
-                <span className="pill">{saleCart.reduce((sum, item) => sum + item.qty, 0)} itens</span>
-              </div>
-              {saleCart.length === 0 ? (
-                <div className="empty-state">
-                  Toque nos produtos ao lado para montar a venda presencial.
+
+                <div className="cash-payments-grid">
+                  <div className="cash-payment-chip">
+                    <span>Dinheiro</span>
+                    <strong>{formatPrice(todayOnlineTotals.cash + todayCashTotals.cash)}</strong>
+                  </div>
+                  <div className="cash-payment-chip">
+                    <span>Pix</span>
+                    <strong>{formatPrice(todayOnlineTotals.pix + todayCashTotals.pix)}</strong>
+                  </div>
+                  <div className="cash-payment-chip">
+                    <span>Cartao</span>
+                    <strong>{formatPrice(todayOnlineTotals.card + todayCashTotals.card)}</strong>
+                  </div>
+                  <div className="cash-payment-chip">
+                    <span>Outros</span>
+                    <strong>{formatPrice(todayOnlineTotals.other + todayCashTotals.other)}</strong>
+                  </div>
                 </div>
-              ) : (
-                <div className="mini-list">
-                  {saleCart.map((item) => (
-                    <div className="mini-list-item" key={item.title}>
-                      <div>
-                        <strong>{item.title}</strong>
-                        <small>{item.price}</small>
+              </section>
+
+              <section className="admin-card">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Produtos do dia</p>
+                    <h2>Mais vendidos</h2>
+                  </div>
+                  <span className="pill">{todaySoldItems.length} itens destacados</span>
+                </div>
+
+                {todaySoldItems.length === 0 ? (
+                  <div className="empty-state">Ainda nao houve vendas hoje.</div>
+                ) : (
+                  <div className="detail-list">
+                    {todaySoldItems.map((item) => (
+                      <div className="detail-list-item" key={item.title}>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <small>{item.qty} unidades</small>
+                        </div>
+                        <strong>{formatPrice(item.total)}</strong>
                       </div>
-                      <div className="cart-item-controls">
-                        <button type="button" onClick={() => updateSaleQty(item.title, -1)}>
-                          -
-                        </button>
-                        <span>{item.qty}</span>
-                        <button type="button" onClick={() => updateSaleQty(item.title, 1)}>
-                          +
-                        </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="admin-card">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Movimentacao recente</p>
+                    <h2>Ultimas vendas do dia</h2>
+                  </div>
+                  <span className="pill">{todayRecentMovements.length} registros</span>
+                </div>
+
+                {todayRecentMovements.length === 0 ? (
+                  <div className="empty-state">Nenhum movimento registrado hoje.</div>
+                ) : (
+                  <div className="order-list">
+                    {todayRecentMovements.map((movement) => (
+                      <article className="order-card" key={`${movement.type}-${movement.id}`}>
+                        <div className="order-card-top">
+                          <strong>
+                            #{movement.orderCode} - {movement.customerName}
+                          </strong>
+                          <span>{formatDateTime(movement.createdAt)}</span>
+                        </div>
+                        <small>
+                          {movement.type} - {movement.payment}
+                        </small>
+                        <div className="order-card-bottom">
+                          <span>Resumo do dia</span>
+                          <strong>{formatPrice(movement.total)}</strong>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          ) : null}
+          {activeSection === "sales" ? (
+            <div className="cash-layout">
+              <section className="admin-card sales-builder">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Venda manual</p>
+                    <h2>Frente de caixa</h2>
+                  </div>
+                  <span className="pill">
+                    {productsLoading ? "Carregando produtos..." : `${products.length} itens`}
+                  </span>
+                </div>
+
+                <div className="cash-form-grid">
+                  <label>
+                    Cliente
+                    <input
+                      type="text"
+                      name="customerName"
+                      placeholder="Opcional"
+                      value={saleForm.customerName}
+                      onChange={handleSaleFieldChange}
+                    />
+                  </label>
+
+                  <label>
+                    Pagamento
+                    <select name="payment" value={saleForm.payment} onChange={handleSaleFieldChange}>
+                      <option value="pix">Pix</option>
+                      <option value="dinheiro">Dinheiro</option>
+                      <option value="cartao">Cartao</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Desconto
+                    <input
+                      type="text"
+                      name="discount"
+                      placeholder="0,00"
+                      value={saleForm.discount}
+                      onChange={handleSaleFieldChange}
+                    />
+                  </label>
+
+                  <label>
+                    Acrescimo
+                    <input
+                      type="text"
+                      name="surcharge"
+                      placeholder="0,00"
+                      value={saleForm.surcharge}
+                      onChange={handleSaleFieldChange}
+                    />
+                  </label>
+
+                  <label className="full">
+                    Observacoes
+                    <textarea
+                      rows="3"
+                      name="notes"
+                      placeholder="Ex.: venda presencial, encomenda retirada, troco para 100..."
+                      value={saleForm.notes}
+                      onChange={handleSaleFieldChange}
+                    />
+                  </label>
+                </div>
+
+                <div className="cash-product-groups">
+                  {groupedProducts.map(({ category, products: categoryProducts }) => (
+                    <div key={category} className="cash-category-block">
+                      <h3>{category}</h3>
+                      <div className="cash-product-grid">
+                        {categoryProducts.map((product) => (
+                          <button
+                            key={product.id}
+                            type="button"
+                            className="cash-product-button"
+                            onClick={() => handleAddProduct(product)}
+                          >
+                            <span>{product.title}</span>
+                            <strong>{formatDisplayPrice(product.price)}</strong>
+                            {Array.isArray(product.subProducts) && product.subProducts.length > 0 ? (
+                              <small>{product.subProducts.length} opcoes</small>
+                            ) : (
+                              <small>Adicionar direto</small>
+                            )}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   ))}
                 </div>
-              )}
+              </section>
 
-              <div className="cash-total-box">
-                <div className="cash-total-lines">
-                  <span>Subtotal: {formatPrice(saleCartSubtotal)}</span>
-                  <span>Desconto: {formatPrice(saleDiscount)}</span>
-                  <span>Acrescimo: {formatPrice(saleSurcharge)}</span>
+              <section className="admin-card sales-cart-card">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Venda atual</p>
+                    <h2>Carrinho do caixa</h2>
+                  </div>
+                  <span className="pill">{saleCart.reduce((sum, item) => sum + item.qty, 0)} itens</span>
                 </div>
-                <strong>{formatPrice(saleCartTotal)}</strong>
-              </div>
+                {saleCart.length === 0 ? (
+                  <div className="empty-state">
+                    Toque nos produtos ao lado para montar a venda presencial.
+                  </div>
+                ) : (
+                  <div className="mini-list">
+                    {saleCart.map((item) => (
+                      <div className="mini-list-item" key={item.title}>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <small>{item.price}</small>
+                        </div>
+                        <div className="cart-item-controls">
+                          <button type="button" onClick={() => updateSaleQty(item.title, -1)}>
+                            -
+                          </button>
+                          <span>{item.qty}</span>
+                          <button type="button" onClick={() => updateSaleQty(item.title, 1)}>
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-              <button
-                type="button"
-                className="modal-add"
-                onClick={handleFinishSale}
-                disabled={submittingSale || !activeSession}
-              >
-                {submittingSale ? "Registrando..." : "Fechar venda no caixa"}
-              </button>
-            </section>
-          </div>
+                <div className="cash-total-box">
+                  <div className="cash-total-lines">
+                    <span>Subtotal: {formatPrice(saleCartSubtotal)}</span>
+                    <span>Desconto: {formatPrice(saleDiscount)}</span>
+                    <span>Acrescimo: {formatPrice(saleSurcharge)}</span>
+                  </div>
+                  <strong>{formatPrice(saleCartTotal)}</strong>
+                </div>
 
-          <div className="cash-layout">
+                <button
+                  type="button"
+                  className="modal-add"
+                  onClick={handleFinishSale}
+                  disabled={submittingSale || !activeSession}
+                >
+                  {submittingSale ? "Registrando..." : "Fechar venda no caixa"}
+                </button>
+              </section>
+            </div>
+          ) : null}
+
+          {activeSection === "orders" ? (
             <section className="admin-card">
               <div className="section-heading">
                 <div>
@@ -920,12 +1236,14 @@ export default function CashPage() {
                 </div>
               )}
             </section>
+          ) : null}
 
+          {activeSection === "history" ? (
             <section className="admin-card">
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Historico do caixa</p>
-                  <h2>Quem abriu e fechou</h2>
+                  <h2>Sessoes detalhadas</h2>
                 </div>
                 <span className="pill">
                   {sessionsLoading ? "Atualizando..." : `${recentSessions.length} sessoes`}
@@ -936,35 +1254,44 @@ export default function CashPage() {
                 <div className="empty-state">Nenhuma sessao registrada ainda.</div>
               ) : (
                 <div className="order-list">
-                  {recentSessions.map((session) => (
-                    <article className="order-card" key={session.id}>
-                      <div className="order-card-top">
-                        <strong>{session.status === "open" ? "Caixa aberto" : "Caixa fechado"}</strong>
-                        <span>{formatDateTime(session.openedAt)}</span>
-                      </div>
-                      <small>
-                        Aberto por {session.openedByName || "Admin"} - {session.openedByEmail || "Sem email"}
-                      </small>
-                      <p className="order-card-lines">
-                        Valor inicial: {formatPrice(Number(session.openingAmount || 0))}
-                        {session.status === "closed"
-                          ? ` | Saldo esperado: ${formatPrice(Number(session.expectedClosingBalance || 0))}`
-                          : " | Sessao ainda em andamento"}
-                      </p>
-                      <div className="order-card-bottom">
-                        <span>
-                          {session.closedByName
-                            ? `Fechado por ${session.closedByName}`
-                            : "Ainda sem fechamento"}
-                        </span>
-                        <strong>{session.closedAt ? formatDateTime(session.closedAt) : "Aberto agora"}</strong>
-                      </div>
-                    </article>
-                  ))}
+                  {recentSessions.map((session) => {
+                    const details = buildSessionDetails(session, orders, cashSales);
+
+                    return (
+                      <button
+                        type="button"
+                        className="order-card order-card-button"
+                        key={session.id}
+                        onClick={() => setSelectedHistorySessionId(session.id)}
+                      >
+                        <div className="order-card-top">
+                          <strong>{session.status === "open" ? "Caixa aberto" : "Caixa fechado"}</strong>
+                          <span>{formatDateTime(session.openedAt)}</span>
+                        </div>
+                        <small>
+                          Aberto por {session.openedByName || "Admin"} - {session.openedByEmail || "Sem email"}
+                        </small>
+                        <p className="order-card-lines">
+                          Vendeu {formatPrice(details?.totalMovement || 0)} | Pix:{" "}
+                          {formatPrice((details?.onlineTotals.pix || 0) + (details?.manualTotals.pix || 0))} |
+                          Dinheiro:{" "}
+                          {formatPrice((details?.onlineTotals.cash || 0) + (details?.manualTotals.cash || 0))}
+                        </p>
+                        <div className="order-card-bottom">
+                          <span>
+                            {session.closedByName
+                              ? `Fechado por ${session.closedByName}`
+                              : "Sessao ainda em andamento"}
+                          </span>
+                          <strong>{session.closedAt ? formatDateTime(session.closedAt) : "Ver detalhes"}</strong>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </section>
-          </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -1035,6 +1362,164 @@ export default function CashPage() {
               {pickerProduct.selectedSubProduct
                 ? `Adicionar ${pickerProduct.selectedSubProduct}`
                 : "Escolha uma opcao"}
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        className={`modal${selectedHistorySession && selectedHistoryDetails ? " is-open" : ""}`}
+        aria-hidden={selectedHistorySession && selectedHistoryDetails ? "false" : "true"}
+      >
+        <div className="modal-backdrop" onClick={() => setSelectedHistorySessionId("")} />
+        {selectedHistorySession && selectedHistoryDetails ? (
+          <div
+            className="modal-card modal-card-wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-session-title"
+          >
+            <button
+              className="modal-close"
+              type="button"
+              aria-label="Fechar"
+              onClick={() => setSelectedHistorySessionId("")}
+            >
+              x
+            </button>
+
+            <div className="modal-content">
+              <p className="eyebrow">Resumo detalhado</p>
+              <h3 id="history-session-title">
+                {selectedHistorySession.status === "open" ? "Caixa em andamento" : "Caixa fechado"}
+              </h3>
+              <p className="modal-details">
+                Aberto por {selectedHistorySession.openedByName || "Admin"} em{" "}
+                {formatFullDateTime(selectedHistorySession.openedAt)}
+                {selectedHistorySession.closedAt
+                  ? ` e fechado por ${selectedHistorySession.closedByName || "Admin"} em ${formatFullDateTime(
+                      selectedHistorySession.closedAt
+                    )}.`
+                  : "."}
+              </p>
+            </div>
+
+            <div className="cash-dashboard-grid">
+              <article className="summary-card">
+                <span className="summary-label">Total vendido</span>
+                <strong>{formatPrice(selectedHistoryDetails.totalMovement)}</strong>
+                <small>Resumo da sessao</small>
+              </article>
+
+              <article className="summary-card">
+                <span className="summary-label">Pedidos online</span>
+                <strong>{selectedHistoryDetails.sessionOrders.length}</strong>
+                <small>{formatPrice(selectedHistoryDetails.onlineTotals.total)}</small>
+              </article>
+
+              <article className="summary-card">
+                <span className="summary-label">Vendas presenciais</span>
+                <strong>{selectedHistoryDetails.sessionCashSales.length}</strong>
+                <small>{formatPrice(selectedHistoryDetails.manualTotals.total)}</small>
+              </article>
+
+              <article className="summary-card">
+                <span className="summary-label">Saldo em dinheiro</span>
+                <strong>{formatPrice(Number(selectedHistorySession.openingAmount || 0) + selectedHistoryDetails.cashTotal)}</strong>
+                <small>Fundo inicial + entradas em dinheiro</small>
+              </article>
+            </div>
+
+            <div className="cash-payments-grid">
+              <div className="cash-payment-chip">
+                <span>Dinheiro</span>
+                <strong>
+                  {formatPrice(selectedHistoryDetails.onlineTotals.cash + selectedHistoryDetails.manualTotals.cash)}
+                </strong>
+              </div>
+              <div className="cash-payment-chip">
+                <span>Pix</span>
+                <strong>
+                  {formatPrice(selectedHistoryDetails.onlineTotals.pix + selectedHistoryDetails.manualTotals.pix)}
+                </strong>
+              </div>
+              <div className="cash-payment-chip">
+                <span>Cartao</span>
+                <strong>
+                  {formatPrice(selectedHistoryDetails.onlineTotals.card + selectedHistoryDetails.manualTotals.card)}
+                </strong>
+              </div>
+              <div className="cash-payment-chip">
+                <span>Outros</span>
+                <strong>
+                  {formatPrice(selectedHistoryDetails.onlineTotals.other + selectedHistoryDetails.manualTotals.other)}
+                </strong>
+              </div>
+            </div>
+
+            <div className="cash-detail-layout">
+              <section className="cash-detail-card">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Itens vendidos</p>
+                    <h2>O que foi vendido</h2>
+                  </div>
+                  <span className="pill">{selectedHistoryDetails.soldItems.length} itens</span>
+                </div>
+
+                {selectedHistoryDetails.soldItems.length === 0 ? (
+                  <div className="empty-state">Nenhum item vendido nessa sessao.</div>
+                ) : (
+                  <div className="detail-list">
+                    {selectedHistoryDetails.soldItems.map((item) => (
+                      <div className="detail-list-item" key={item.title}>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <small>{item.qty} unidades vendidas</small>
+                        </div>
+                        <strong>{formatPrice(item.total)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="cash-detail-card">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Movimentos da sessao</p>
+                    <h2>Pedidos e vendas</h2>
+                  </div>
+                  <span className="pill">{selectedHistoryDetails.movements.length} registros</span>
+                </div>
+
+                {selectedHistoryDetails.movements.length === 0 ? (
+                  <div className="empty-state">Nenhum movimento encontrado nessa sessao.</div>
+                ) : (
+                  <div className="detail-list">
+                    {selectedHistoryDetails.movements.map((movement) => (
+                      <div className="detail-list-item detail-list-item-stacked" key={`${movement.type}-${movement.id}`}>
+                        <div>
+                          <strong>
+                            #{movement.orderCode} - {movement.customerName}
+                          </strong>
+                          <small>
+                            {movement.type} - {movement.payment} - {formatFullDateTime(movement.createdAt)}
+                          </small>
+                          <small>
+                            {(movement.items || []).map((item) => `${item.qty}x ${item.title}`).join(" - ")}
+                          </small>
+                        </div>
+                        <strong>{formatPrice(movement.total)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <button className="modal-add" type="button" onClick={() => setSelectedHistorySessionId("")}>
+              Fechar resumo
             </button>
           </div>
         ) : null}

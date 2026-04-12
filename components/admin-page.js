@@ -40,11 +40,11 @@ function loadImageFromFile(file) {
     reader.onload = () => {
       const image = new Image();
       image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Não foi possível ler a foto selecionada."));
+      image.onerror = () => reject(new Error("Nao foi possivel ler a foto selecionada."));
       image.src = reader.result;
     };
 
-    reader.onerror = () => reject(new Error("Não foi possível ler a foto selecionada."));
+    reader.onerror = () => reject(new Error("Nao foi possivel ler a foto selecionada."));
     reader.readAsDataURL(file);
   });
 }
@@ -65,7 +65,7 @@ async function optimizeImageFile(file) {
   const context = canvas.getContext("2d");
 
   if (!context) {
-    throw new Error("Não foi possível preparar a foto para envio.");
+    throw new Error("Nao foi possivel preparar a foto para envio.");
   }
 
   let quality = 0.86;
@@ -108,11 +108,23 @@ function parseSubProductsText(value) {
   return Array.from(uniqueOptions).slice(0, 20);
 }
 
+function buildFormStateFromProduct(product) {
+  return {
+    title: product?.title || "",
+    category: product?.category || "",
+    price: product?.price || "",
+    image: product?.image || "",
+    details: product?.details || "",
+    subProductsText: Array.isArray(product?.subProducts) ? product.subProducts.join("\n") : "",
+    available: product?.available !== false,
+  };
+}
+
 export default function AdminPage() {
   const [authState, setAuthState] = useState({
     loggedIn: false,
     isAdmin: false,
-    status: "Verificando sessão...",
+    status: "Verificando sessao...",
     name: "",
     email: "",
     showDenied: false,
@@ -124,6 +136,7 @@ export default function AdminPage() {
   const [productsLoading, setProductsLoading] = useState(false);
   const [imageProcessing, setImageProcessing] = useState(false);
   const [imageFeedback, setImageFeedback] = useState("");
+  const [editingProductId, setEditingProductId] = useState("");
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
@@ -145,7 +158,7 @@ export default function AdminPage() {
       setAuthState({
         loggedIn: true,
         isAdmin: false,
-        status: "Validando permissões de admin...",
+        status: "Validando permissoes de admin...",
         name: user.displayName || "Conta Google",
         email: user.email || "",
         showDenied: false,
@@ -160,7 +173,7 @@ export default function AdminPage() {
             loggedIn: true,
             isAdmin: false,
             status:
-              "Conta registrada. Agora é só marcar isAdmin como true em users no Firestore para liberar o painel.",
+              "Conta registrada. Agora e so marcar isAdmin como true em users no Firestore para liberar o painel.",
             name: user.displayName || "Conta Google",
             email: user.email || "",
             showDenied: true,
@@ -181,7 +194,7 @@ export default function AdminPage() {
         setAuthState({
           loggedIn: true,
           isAdmin: false,
-          status: "Não foi possível validar o acesso agora.",
+          status: "Nao foi possivel validar o acesso agora.",
           name: user.displayName || "Conta Google",
           email: user.email || "",
           showDenied: true,
@@ -206,7 +219,10 @@ export default function AdminPage() {
             ...item.data(),
           }))
           .sort((a, b) =>
-            `${a.category}-${a.title}`.localeCompare(`${b.category}-${b.title}`, "pt-BR")
+            `${a.category || ""}-${a.title || ""}`.localeCompare(
+              `${b.category || ""}-${b.title || ""}`,
+              "pt-BR"
+            )
           );
 
         setProducts(nextProducts);
@@ -240,7 +256,7 @@ export default function AdminPage() {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      setImageFeedback("Escolha um arquivo de imagem válido.");
+      setImageFeedback("Escolha um arquivo de imagem valido.");
       return;
     }
 
@@ -256,7 +272,7 @@ export default function AdminPage() {
       setImageFeedback("Foto carregada com sucesso.");
     } catch (error) {
       console.error(error);
-      setImageFeedback(error.message || "Não foi possível carregar essa foto.");
+      setImageFeedback(error.message || "Nao foi possivel carregar essa foto.");
     } finally {
       setImageProcessing(false);
     }
@@ -266,7 +282,7 @@ export default function AdminPage() {
     event.preventDefault();
 
     if (!authState.isAdmin) {
-      window.alert("Faça login com uma conta admin para salvar produtos.");
+      window.alert("Faca login com uma conta admin para salvar produtos.");
       return;
     }
 
@@ -278,20 +294,29 @@ export default function AdminPage() {
       details: formData.details.trim(),
       subProducts: parseSubProductsText(formData.subProductsText),
       available: Boolean(formData.available),
-      createdAt: serverTimestamp(),
     };
 
     if (!product.title || !product.category || !product.price) {
-      window.alert("Preencha nome, categoria e preço.");
+      window.alert("Preencha nome, categoria e preco.");
       return;
     }
 
     setSubmitting(true);
 
     try {
-      await addDoc(productsCollection, product);
+      if (editingProductId) {
+        const productRef = doc(db, "products", editingProductId);
+        await updateDoc(productRef, product);
+      } else {
+        await addDoc(productsCollection, {
+          ...product,
+          createdAt: serverTimestamp(),
+        });
+      }
+
       setFormData(initialFormState);
       setImageFeedback("");
+      setEditingProductId("");
     } catch (error) {
       console.error(error);
       if (error?.code === "permission-denied") {
@@ -300,11 +325,11 @@ export default function AdminPage() {
 
         window.alert(
           isUploadedImage
-            ? "Não foi possível salvar a foto deste produto. Publique as rules mais recentes do Firestore e, se precisar, tente uma imagem menor."
-            : "Não foi possível salvar o produto porque a gravação foi bloqueada pelas rules do Firestore. Confira se as rules mais recentes foram publicadas."
+            ? "Nao foi possivel salvar a foto deste produto. Publique as rules mais recentes do Firestore e, se precisar, tente uma imagem menor."
+            : "Nao foi possivel salvar o produto porque a gravacao foi bloqueada pelas rules do Firestore. Confira se as rules mais recentes foram publicadas."
         );
       } else {
-        window.alert("Não foi possível salvar o produto. Tente novamente.");
+        window.alert("Nao foi possivel salvar o produto. Tente novamente.");
       }
     } finally {
       setSubmitting(false);
@@ -316,7 +341,7 @@ export default function AdminPage() {
       setAuthState((current) => ({
         ...current,
         status:
-          "Abra o admin por localhost ou Firebase Hosting. Login Google não funciona via arquivo local.",
+          "Abra o admin por localhost ou Firebase Hosting. Login Google nao funciona via arquivo local.",
       }));
       return;
     }
@@ -345,7 +370,7 @@ export default function AdminPage() {
       await signOut(auth);
     } catch (error) {
       console.error(error);
-      window.alert("Não foi possível sair agora.");
+      window.alert("Nao foi possivel sair agora.");
     }
   }
 
@@ -359,7 +384,7 @@ export default function AdminPage() {
       });
     } catch (error) {
       console.error(error);
-      window.alert("Não foi possível atualizar este produto.");
+      window.alert("Nao foi possivel atualizar este produto.");
     }
   }
 
@@ -369,21 +394,44 @@ export default function AdminPage() {
     try {
       const productRef = doc(db, "products", product.id);
       await deleteDoc(productRef);
+
+      if (editingProductId === product.id) {
+        setEditingProductId("");
+        setFormData(initialFormState);
+        setImageFeedback("");
+      }
     } catch (error) {
       console.error(error);
-      window.alert("Não foi possível excluir este produto.");
+      window.alert("Nao foi possivel excluir este produto.");
     }
+  }
+
+  function handleEditProduct(product) {
+    setEditingProductId(product.id);
+    setFormData(buildFormStateFromProduct(product));
+    setImageFeedback("");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }
+
+  function handleCancelEdit() {
+    setEditingProductId("");
+    setFormData(initialFormState);
+    setImageFeedback("");
   }
 
   return (
     <div className="admin-page">
       <header className="admin-header">
         <h1>Painel Admin</h1>
-        <p>Cadastre itens do cardápio e controle disponibilidade com login Google.</p>
+        <p>Cadastre itens do cardapio e controle disponibilidade com login Google.</p>
 
         <div className="admin-shortcuts">
           <Link className="secondary-button" href="/">
-            Ver cardápio
+            Ver cardapio
           </Link>
           <Link className="secondary-button" href="/caixa">
             Abrir caixa
@@ -408,7 +456,7 @@ export default function AdminPage() {
           <p className="eyebrow">Acesso seguro</p>
           <h2>Entrar com Google</h2>
           <p className="auth-copy">
-            Faça login com a conta Google autorizada no Firebase. Somente usuários marcados como
+            Faca login com a conta Google autorizada no Firebase. Somente usuarios marcados como
             admin podem acessar este painel.
           </p>
           <button
@@ -426,9 +474,9 @@ export default function AdminPage() {
       {authState.showDenied ? (
         <section className="auth-card auth-card-danger">
           <p className="eyebrow">Acesso negado</p>
-          <h2>Conta sem permissão de admin</h2>
+          <h2>Conta sem permissao de admin</h2>
           <p className="auth-copy">
-            Essa conta Google é registrada automaticamente na coleção <code>users</code>. Depois
+            Essa conta Google e registrada automaticamente na colecao <code>users</code>. Depois
             disso, basta mudar o campo <code>isAdmin</code> para <code>true</code> no Firestore.
           </p>
         </section>
@@ -439,7 +487,18 @@ export default function AdminPage() {
           <div className="status-banner">{authState.status}</div>
 
           <section className="admin-card">
-            <h2>Novo produto</h2>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Cadastro de produtos</p>
+                <h2>{editingProductId ? "Editar produto" : "Novo produto"}</h2>
+              </div>
+              {editingProductId ? (
+                <button type="button" className="secondary-button" onClick={handleCancelEdit}>
+                  Cancelar edicao
+                </button>
+              ) : null}
+            </div>
+
             <form className="admin-form" onSubmit={handleSubmit}>
               <label>
                 Nome do produto
@@ -471,7 +530,7 @@ export default function AdminPage() {
               </label>
 
               <label>
-                Preço (ex: 25.90)
+                Preco (ex: 25.90)
                 <input
                   type="text"
                   name="price"
@@ -494,7 +553,11 @@ export default function AdminPage() {
 
               <label>
                 Enviar foto do celular
-                <input type="file" accept="image/*" capture="environment" onChange={handleImageUpload} />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                />
               </label>
 
               <div className="admin-image-tools full">
@@ -506,13 +569,13 @@ export default function AdminPage() {
                     }}
                   />
                 ) : (
-                  <div className="admin-image-placeholder">A prévia da foto aparece aqui.</div>
+                  <div className="admin-image-placeholder">A previa da foto aparece aqui.</div>
                 )}
 
                 <div className="admin-image-meta">
                   <p className="admin-image-help">
-                    Você pode colar uma URL ou enviar uma foto direto do celular. A imagem é otimizada
-                    automaticamente antes de salvar.
+                    Voce pode colar uma URL ou enviar uma foto direto do celular. A imagem e
+                    otimizada automaticamente antes de salvar.
                   </p>
                   {imageFeedback ? <p className="admin-image-feedback">{imageFeedback}</p> : null}
                   {formData.image ? (
@@ -532,7 +595,7 @@ export default function AdminPage() {
               </div>
 
               <label className="full">
-                Descrição
+                Descricao
                 <textarea
                   name="details"
                   rows="3"
@@ -542,16 +605,17 @@ export default function AdminPage() {
               </label>
 
               <label className="full">
-                Variações do produto
+                Variacoes do produto
                 <textarea
                   name="subProductsText"
                   rows="4"
-                  placeholder={"Uma opção por linha"}
+                  placeholder="Uma opcao por linha"
                   value={formData.subProductsText}
                   onChange={handleFieldChange}
                 />
                 <small className="field-help">
-                  Se este produto tiver variações (ex: sabores), liste cada opção em uma linha. As opções cadastradas aparecerão como um campo de texto separado no cardápio. Limite de 20 opções.
+                  Se este produto tiver variacoes (ex: sabores), liste cada opcao em uma linha. As
+                  opcoes cadastradas aparecerao no cardapio. Limite de 20 opcoes.
                 </small>
               </label>
 
@@ -562,11 +626,15 @@ export default function AdminPage() {
                   checked={formData.available}
                   onChange={handleFieldChange}
                 />
-                Disponível no cardápio
+                Disponivel no cardapio
               </label>
 
               <button type="submit" disabled={submitting}>
-                {submitting ? "Salvando..." : "Salvar produto"}
+                {submitting
+                  ? "Salvando..."
+                  : editingProductId
+                    ? "Salvar alteracoes"
+                    : "Salvar produto"}
               </button>
             </form>
           </section>
@@ -598,15 +666,18 @@ export default function AdminPage() {
                     <strong>{product.title}</strong>
                     <br />
                     <small>
-                      {product.category} • {formatDisplayPrice(product.price)}
+                      {product.category} - {formatDisplayPrice(product.price)}
                     </small>
                     <br />
-                    <small>{product.available ? "Disponível" : "Indisponível"}</small>
+                    <small>{product.available ? "Disponivel" : "Indisponivel"}</small>
                   </div>
 
                   <div className="product-actions">
+                    <button type="button" onClick={() => handleEditProduct(product)}>
+                      Editar
+                    </button>
                     <button type="button" onClick={() => toggleProductAvailability(product)}>
-                      {product.available ? "Marcar indisponível" : "Marcar disponível"}
+                      {product.available ? "Marcar indisponivel" : "Marcar disponivel"}
                     </button>
                     <button type="button" onClick={() => deleteProduct(product)}>
                       Excluir

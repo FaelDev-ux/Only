@@ -975,10 +975,55 @@ h1 {
   gap: 20px;
 }
 
+.cash-sections-card {
+  padding: 14px;
+}
+
+.cash-section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cash-section-tab {
+  border: 1px solid rgba(214, 177, 122, 0.55);
+  background: rgba(255, 250, 246, 0.92);
+  color: #8b6a62;
+  border-radius: 999px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.cash-section-tab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(109, 74, 63, 0.12);
+}
+
+.cash-section-tab.is-active {
+  background: linear-gradient(135deg, #fff8f3 0%, #f4e3d6 50%, #f8efe7 100%);
+  color: #6d4a3f;
+  border-color: rgba(214, 177, 122, 0.78);
+  box-shadow: 0 10px 20px rgba(109, 74, 63, 0.14);
+}
+
 .cash-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
   gap: 20px;
+}
+
+.cash-dashboard-layout {
+  display: grid;
+  gap: 20px;
+}
+
+.cash-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .summary-grid {
@@ -1254,6 +1299,18 @@ h1 {
   border: 1px solid rgba(214, 177, 122, 0.35);
 }
 
+.order-card-button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.order-card-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 24px rgba(109, 74, 63, 0.14);
+}
+
 .order-card-top,
 .order-card-bottom {
   display: flex;
@@ -1271,6 +1328,48 @@ h1 {
   margin: 0;
   color: #6d4a3f;
   line-height: 1.5;
+}
+
+.cash-detail-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.cash-detail-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(214, 177, 122, 0.35);
+}
+
+.detail-list {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-list-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(214, 177, 122, 0.3);
+}
+
+.detail-list-item-stacked small {
+  display: block;
+  margin-top: 4px;
+  color: #8b6a62;
+  line-height: 1.45;
+}
+
+.detail-list-item small {
+  color: #8b6a62;
 }
 
 .status-banner {
@@ -1308,10 +1407,12 @@ h1 {
 
   .summary-grid,
   .cash-layout,
+  .cash-dashboard-grid,
   .cash-product-grid,
   .cash-session-grid,
   .summary-grid-compact,
-  .cash-payments-grid {
+  .cash-payments-grid,
+  .cash-detail-layout {
     grid-template-columns: 1fr;
   }
 }
