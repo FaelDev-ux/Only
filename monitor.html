@@ -77,6 +77,10 @@
       const btnRestart = document.getElementById('btn-restart')
       const btnStop = document.getElementById('btn-stop')
       const btnRefresh = document.getElementById('btn-refresh')
+      const isPanelOrigin =
+        window.location.hostname === 'localhost' &&
+        window.location.port === '3211'
+      const API_BASE = isPanelOrigin ? '' : 'http://localhost:3211'
 
       function formatDuration(ms) {
         if (!ms) return '-'
@@ -93,8 +97,9 @@
       }
 
       async function fetchJson(url, options) {
-        const response = await fetch(url, options)
-        const data = await response.json()
+        const response = await fetch(`${API_BASE}${url}`, options)
+        const text = await response.text()
+        const data = text ? JSON.parse(text) : {}
         if (!response.ok) throw new Error(data.error || 'Falha na requisicao')
         return data
       }
@@ -125,7 +130,7 @@
           await fetchJson(path, { method: 'POST' })
           await Promise.all([refreshStatus(), refreshLogs()])
         } catch (error) {
-          alert(error.message)
+          alert(`${error.message}. Se estiver abrindo o HTML direto, confirme que o painel em http://localhost:3211 está rodando.`)
         } finally {
           setBusy(false)
         }
