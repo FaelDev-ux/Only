@@ -74,3 +74,7 @@ out/
 
 # dataconnect generated files
 .dataconnect
+
+# Firebase service account
+bolodemaejp-firebase-adminsdk-fbsvc-716f3e8198.json
+service-account.json

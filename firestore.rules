@@ -139,7 +139,9 @@ service cloud.firestore {
           'surcharge',
           'total',
           'customer',
-          'createdAt'
+          'createdAt',
+          'printCompleted',
+          'printedAt'
         ])
         && validShortText(request.resource.data.orderCode, 20)
         && request.resource.data.items is list
@@ -159,6 +161,10 @@ service cloud.firestore {
         && request.resource.data.total <= 100000
         && request.resource.data.total
           == request.resource.data.subtotal - request.resource.data.discount + request.resource.data.surcharge
+        && (!request.resource.data.keys().hasAny(['printCompleted'])
+          || request.resource.data.printCompleted == false)
+        && (!request.resource.data.keys().hasAny(['printedAt'])
+          || request.resource.data.printedAt == null)
         && validCustomerPayload();
     }
 

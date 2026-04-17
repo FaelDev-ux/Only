@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -77,6 +77,19 @@ function buildCartItem(product, selectedSubProduct = "") {
     price: product.price,
     image: product.image || "",
   };
+}
+
+function normalizePayment(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (normalized === "cartao") return "cartao";
+  if (normalized === "dinheiro") return "dinheiro";
+  if (normalized === "pix") return "pix";
+  return "";
 }
 
 function GoogleIcon() {
@@ -283,7 +296,7 @@ export default function MenuPage() {
 
   async function handleGoogleSignIn() {
     if (window.location.protocol === "file:") {
-      setAuthFeedbackMessage("Não foi possível abrir o login neste momento.");
+      setAuthFeedbackMessage("NÃ£o foi possÃ­vel abrir o login neste momento.");
       return;
     }
 
@@ -300,7 +313,7 @@ export default function MenuPage() {
       await signOut(auth);
     } catch (error) {
       console.error(error);
-      window.alert("Não foi possível sair agora.");
+      window.alert("NÃ£o foi possÃ­vel sair agora.");
     }
   }
 
@@ -337,7 +350,7 @@ export default function MenuPage() {
     event.preventDefault();
 
     if (cart.length === 0) {
-      setAuthFeedbackMessage("Seu carrinho está vazio no momento.");
+      setAuthFeedbackMessage("Seu carrinho estÃ¡ vazio no momento.");
       return;
     }
 
@@ -345,12 +358,12 @@ export default function MenuPage() {
     const normalizedCep = maskCEP(checkoutData.cep);
 
     if (!isValidPhone(normalizedPhone)) {
-      window.alert("Telefone/WhatsApp inválido. Use DDD + número.");
+      window.alert("Telefone/WhatsApp invÃ¡lido. Use DDD + nÃºmero.");
       return;
     }
 
     if (!isValidCEP(normalizedCep)) {
-      window.alert("CEP inválido. Use 8 dígitos.");
+      window.alert("CEP invÃ¡lido. Use 8 dÃ­gitos.");
       return;
     }
 
@@ -360,7 +373,7 @@ export default function MenuPage() {
       const viaCepData = await fetchViaCEP(normalizedCep);
 
       if (!viaCepData) {
-        window.alert("CEP não encontrado. Verifique e tente novamente.");
+        window.alert("CEP nÃ£o encontrado. Verifique e tente novamente.");
         return;
       }
 
@@ -376,7 +389,7 @@ export default function MenuPage() {
       const customer = {
         name: checkoutData.name.trim(),
         phone: normalizedPhone.trim(),
-        payment: checkoutData.payment,
+        payment: normalizePayment(checkoutData.payment),
         cep: normalizedCep.trim(),
         address: checkoutData.address.trim() || viaCepData.logradouro || "",
         addressNumber: checkoutData.addressNumber.trim(),
@@ -402,7 +415,7 @@ export default function MenuPage() {
       });
 
       const messageLines = [
-        "Novo pedido - Bolo de Mãe JP Confeitaria",
+        "Novo pedido - Bolo de MÃ£e JP Confeitaria",
         `Pedido: #${orderCode}`,
         "",
         "Itens:",
@@ -414,10 +427,10 @@ export default function MenuPage() {
         `Nome: ${customer.name}`,
         `WhatsApp: ${customer.phone}`,
         `Pagamento: ${customer.payment}`,
-        `Endereço: ${customer.address}, ${customer.addressNumber}, ${customer.district} - CEP ${customer.cep}`,
+        `EndereÃ§o: ${customer.address}, ${customer.addressNumber}, ${customer.district} - CEP ${customer.cep}`,
         `Cidade/UF: ${customer.city} - ${customer.state}`,
         `Complemento: ${customer.complement || "-"}`,
-        `Observações: ${customer.notes || "-"}`,
+        `ObservaÃ§Ãµes: ${customer.notes || "-"}`,
       ];
 
       if (STORE_WHATSAPP) {
@@ -435,7 +448,7 @@ export default function MenuPage() {
         }
       } else {
         window.alert(
-          "Pedido enviado com sucesso! Configure o número da loja em STORE_WHATSAPP para enviar no WhatsApp."
+          "Pedido enviado com sucesso! Configure o nÃºmero da loja em STORE_WHATSAPP para enviar no WhatsApp."
         );
       }
 
@@ -445,7 +458,7 @@ export default function MenuPage() {
       setIsCartOpen(false);
     } catch (error) {
       console.error(error);
-      window.alert("Não foi possível enviar o pedido. Tente novamente.");
+      window.alert("NÃ£o foi possÃ­vel enviar o pedido. Tente novamente.");
     } finally {
       setCheckoutSubmitting(false);
     }
@@ -472,7 +485,7 @@ export default function MenuPage() {
               {authState.loggedIn ? (
                 <div className="user-chip">
                   <span className="user-chip-label">
-                    {authState.name ? `Olá, ${authState.name}` : "Conta Google"}
+                    {authState.name ? `OlÃ¡, ${authState.name}` : "Conta Google"}
                   </span>
                   <button className="user-chip-logout" type="button" onClick={handleSignOut}>
                     Sair
@@ -497,12 +510,12 @@ export default function MenuPage() {
             </div>
 
             <div className="logo-wrap">
-              <img src="/logo.jpeg" alt="Logo Bolo de Mãe JP Confeitaria" />
+              <img src="/logo.jpeg" alt="Logo Bolo de MÃ£e JP Confeitaria" />
             </div>
 
             <div className="hero-text">
-              <p className="brand">Bolo de Mãe JP Confeitaria</p>
-              <h1>Cardápio</h1>
+              <p className="brand">Bolo de MÃ£e JP Confeitaria</p>
+              <h1>CardÃ¡pio</h1>
               <p className="subtitle">Delicadeza artesanal em cada fatia</p>
             </div>
 
@@ -514,7 +527,7 @@ export default function MenuPage() {
         {productsLoading ? <div className="page-message">Carregando produtos...</div> : null}
 
         {!productsLoading && groupedProducts.length === 0 ? (
-          <div className="empty-state">Nenhum produto disponível no momento.</div>
+          <div className="empty-state">Nenhum produto disponÃ­vel no momento.</div>
         ) : null}
 
         <main className="menu">
@@ -559,7 +572,7 @@ export default function MenuPage() {
                           onClick={() => handleAddProduct(product)}
                         >
                           {Array.isArray(product.subProducts) && product.subProducts.length > 0
-                            ? "Escolher opção"
+                            ? "Escolher opÃ§Ã£o"
                             : "Adicionar ao carrinho"}
                         </button>
                       </li>
@@ -573,7 +586,7 @@ export default function MenuPage() {
 
         <footer className="footer">
           <div className="footer-line" />
-          <p>Encomendas e detalhes pelo WhatsApp • @bolodemaejp</p>
+          <p>Encomendas e detalhes pelo WhatsApp â€¢ @bolodemaejp</p>
         </footer>
       </div>
 
@@ -598,7 +611,7 @@ export default function MenuPage() {
               aria-label="Fechar"
               onClick={() => setModalProduct(null)}
             >
-              ✕
+              âœ•
             </button>
             <div
               className={`modal-photo${modalProduct.image ? " has-image" : ""}`}
@@ -619,7 +632,7 @@ export default function MenuPage() {
               <p className="modal-details">{modalProduct.details}</p>
               {modalProduct.subProducts.length > 0 ? (
                 <div className="modal-options">
-                  <p className="modal-options-label">Escolha uma opção</p>
+                  <p className="modal-options-label">Escolha uma opÃ§Ã£o</p>
                   <div className="modal-options-grid">
                     {modalProduct.subProducts.map((subProduct) => (
                       <button
@@ -660,7 +673,7 @@ export default function MenuPage() {
               {modalProduct.subProducts.length > 0
                 ? modalProduct.selectedSubProduct
                   ? `Adicionar ${modalProduct.selectedSubProduct}`
-                  : "Escolha uma opção"
+                  : "Escolha uma opÃ§Ã£o"
                 : "Adicionar ao carrinho"}
             </button>
           </div>
@@ -677,7 +690,7 @@ export default function MenuPage() {
 
         <div className="cart-items">
           {cart.length === 0 ? (
-            <div className="empty-state">Seu carrinho está vazio.</div>
+            <div className="empty-state">Seu carrinho estÃ¡ vazio.</div>
           ) : (
             cart.map((item) => (
               <div className="cart-item" key={item.title}>
@@ -721,7 +734,7 @@ export default function MenuPage() {
             onClick={() => {
                 if (cart.length === 0) {
                   setIsCartOpen(false);
-                  setAuthFeedbackMessage("Seu carrinho está vazio no momento.");
+                  setAuthFeedbackMessage("Seu carrinho estÃ¡ vazio no momento.");
                   return;
                 }
 
@@ -747,7 +760,7 @@ export default function MenuPage() {
               aria-label="Fechar"
               onClick={() => setIsCheckoutOpen(false)}
             >
-              ✕
+              âœ•
             </button>
             <div className="modal-content">
               <h3 id="checkout-title">Finalizar pedido</h3>
@@ -770,7 +783,7 @@ export default function MenuPage() {
                   Forma de pagamento
                   <select name="payment" required value={checkoutData.payment} onChange={handleCheckoutFieldChange}>
                     <option value="">Selecione</option>
-                    <option value="cartão">Cartão</option>
+                    <option value="cartao">Cartão</option>
                     <option value="dinheiro">Dinheiro</option>
                     <option value="pix">Pix</option>
                   </select>
@@ -789,12 +802,12 @@ export default function MenuPage() {
                 </label>
 
                 <label>
-                  Endereço
+                  EndereÃ§o
                   <input type="text" name="address" required value={checkoutData.address} onChange={handleCheckoutFieldChange} />
                 </label>
 
                 <label>
-                  Número
+                  NÃºmero
                   <input
                     type="text"
                     name="addressNumber"
@@ -815,7 +828,7 @@ export default function MenuPage() {
                 </label>
 
                 <label className="form-span-2">
-                  Observações
+                  ObservaÃ§Ãµes
                   <textarea name="notes" rows="3" value={checkoutData.notes} onChange={handleCheckoutFieldChange} />
                 </label>
               </div>
@@ -841,7 +854,7 @@ export default function MenuPage() {
               aria-label="Fechar"
               onClick={() => setAuthFeedbackMessage("")}
             >
-              ✕
+              âœ•
             </button>
             <div className="modal-content">
               <h3 id="auth-feedback-title">Aviso</h3>
@@ -860,3 +873,4 @@ export default function MenuPage() {
     </>
   );
 }
+

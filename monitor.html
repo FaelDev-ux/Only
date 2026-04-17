@@ -1,0 +1,144 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Painel Impressora Only</title>
+    <style>
+      :root { --bg:#0f1417; --card:#182026; --text:#eef4f7; --muted:#93a1aa; --green:#2ecc71; --red:#ff5f57; --yellow:#f4b942; }
+      * { box-sizing: border-box; }
+      body { margin:0; font-family:Segoe UI, Arial, sans-serif; color:var(--text); min-height:100vh; background:radial-gradient(circle at top left, rgba(74,163,255,.16), transparent 28%), radial-gradient(circle at bottom right, rgba(46,204,113,.12), transparent 25%), var(--bg); }
+      .wrap { max-width: 920px; margin: 0 auto; padding: 32px 20px 48px; }
+      h1 { margin:0; font-size:clamp(28px, 5vw, 42px); }
+      .subtitle, .tiny { color:var(--muted); }
+      .card { background:rgba(24,32,38,.92); border:1px solid rgba(255,255,255,.07); border-radius:20px; padding:20px; box-shadow:0 16px 40px rgba(0,0,0,.26); margin-bottom:18px; }
+      .status { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
+      .badge { display:inline-flex; align-items:center; gap:10px; padding:10px 16px; border-radius:999px; background:rgba(255,255,255,.06); font-weight:700; }
+      .dot { width:12px; height:12px; border-radius:50%; background:var(--yellow); }
+      .dot.online { background:var(--green); }
+      .dot.offline { background:var(--red); }
+      .stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-top:16px; }
+      .stat { background:#10161a; border-radius:14px; padding:14px; }
+      .stat-label { display:block; color:var(--muted); font-size:13px; margin-bottom:8px; }
+      .stat-value { font-size:22px; font-weight:700; }
+      .actions { display:flex; flex-wrap:wrap; gap:12px; }
+      button { border:none; border-radius:12px; padding:14px 18px; min-width:150px; color:#fff; font-weight:700; cursor:pointer; }
+      .start { background:#1fa34a; } .restart { background:#256dff; } .stop { background:#cf413a; } .refresh { background:#7a52e0; }
+      pre { margin:0; background:#0a0f12; color:#ddf7e7; padding:16px; border-radius:14px; min-height:260px; overflow:auto; white-space:pre-wrap; }
+      code { background:rgba(255,255,255,.08); border-radius:8px; padding:2px 6px; }
+      @media (max-width:700px){ button{width:100%;} }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div style="margin-bottom:18px;">
+        <h1>Painel da Impressora Only</h1>
+        <div class="subtitle">Controle visual do processo <code>only-impressora</code> em <code>http://localhost:3211</code></div>
+      </div>
+
+      <section class="card">
+        <div class="status">
+          <div class="badge"><span class="dot" id="status-dot"></span><span id="status-text">Carregando status...</span></div>
+          <div class="tiny" id="last-update">Atualizando...</div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="stat-label">PID</span><span class="stat-value" id="pid">-</span></div>
+          <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value" id="uptime">-</span></div>
+          <div class="stat"><span class="stat-label">Reinícios</span><span class="stat-value" id="restarts">-</span></div>
+          <div class="stat"><span class="stat-label">Memória</span><span class="stat-value" id="memory">-</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="actions">
+          <button class="start" id="btn-start">Iniciar</button>
+          <button class="restart" id="btn-restart">Reiniciar</button>
+          <button class="stop" id="btn-stop">Parar</button>
+          <button class="refresh" id="btn-refresh">Atualizar</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="tiny" style="margin-bottom:12px;">Últimos logs</div>
+        <pre id="logs">Carregando logs...</pre>
+      </section>
+    </div>
+
+    <script>
+      const statusDot = document.getElementById('status-dot')
+      const statusText = document.getElementById('status-text')
+      const pidEl = document.getElementById('pid')
+      const uptimeEl = document.getElementById('uptime')
+      const restartsEl = document.getElementById('restarts')
+      const memoryEl = document.getElementById('memory')
+      const lastUpdateEl = document.getElementById('last-update')
+      const logsEl = document.getElementById('logs')
+      const btnStart = document.getElementById('btn-start')
+      const btnRestart = document.getElementById('btn-restart')
+      const btnStop = document.getElementById('btn-stop')
+      const btnRefresh = document.getElementById('btn-refresh')
+
+      function formatDuration(ms) {
+        if (!ms) return '-'
+        const seconds = Math.floor((Date.now() - ms) / 1000)
+        const h = Math.floor(seconds / 3600)
+        const m = Math.floor((seconds % 3600) / 60)
+        const s = seconds % 60
+        return `${h}h ${m}m ${s}s`
+      }
+
+      function formatMemory(bytes) {
+        if (!bytes) return '-'
+        return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+      }
+
+      async function fetchJson(url, options) {
+        const response = await fetch(url, options)
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Falha na requisicao')
+        return data
+      }
+
+      function setBusy(busy) {
+        ;[btnStart, btnRestart, btnStop, btnRefresh].forEach(btn => btn.disabled = busy)
+      }
+
+      async function refreshStatus() {
+        const data = await fetchJson('/api/status')
+        statusDot.className = `dot ${data.online ? 'online' : 'offline'}`
+        statusText.textContent = data.online ? 'Impressora online' : 'Impressora offline'
+        pidEl.textContent = data.pid ?? '-'
+        uptimeEl.textContent = formatDuration(data.uptime)
+        restartsEl.textContent = data.restarts ?? 0
+        memoryEl.textContent = formatMemory(data.monit?.memory)
+        lastUpdateEl.textContent = `Última atualização: ${new Date().toLocaleTimeString('pt-BR')}`
+      }
+
+      async function refreshLogs() {
+        const data = await fetchJson('/api/logs')
+        logsEl.textContent = data.logs || 'Sem logs recentes.'
+      }
+
+      async function doAction(path) {
+        try {
+          setBusy(true)
+          await fetchJson(path, { method: 'POST' })
+          await Promise.all([refreshStatus(), refreshLogs()])
+        } catch (error) {
+          alert(error.message)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      btnStart.onclick = () => doAction('/api/start')
+      btnRestart.onclick = () => doAction('/api/restart')
+      btnStop.onclick = () => doAction('/api/stop')
+      btnRefresh.onclick = async () => { setBusy(true); try { await Promise.all([refreshStatus(), refreshLogs()]) } finally { setBusy(false) } }
+
+      Promise.all([refreshStatus(), refreshLogs()])
+      setInterval(refreshStatus, 5000)
+      setInterval(refreshLogs, 8000)
+    </script>
+  </body>
+</html>
