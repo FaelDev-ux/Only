@@ -8,6 +8,10 @@ echo   Instalacao da Impressora Only via PM2
 echo ==========================================
 echo.
 
+if exist "C:\Program Files\nodejs\node.exe" (
+  set "PATH=C:\Program Files\nodejs;%PATH%"
+)
+
 where node >nul 2>nul
 if errorlevel 1 (
   echo [ERRO] Node.js nao foi encontrado.

@@ -19,7 +19,7 @@ import { getFirestore as getAdminFirestore, Timestamp } from 'firebase-admin/fir
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const LOCAL_PRINTER_NAME = 'ELGIN_i8'
+const LOCAL_PRINTER_NAME = 'elgin-i7'
 const ENV_FILE_CANDIDATES = ['.env.local', '.env']
 
 loadEnvFiles()

@@ -3,12 +3,12 @@
     {
       "name": "only-impressora",
       "script": "teste.mjs",
-      "cwd": "C:/Users/Micro/Documents/GitHub/Only"
+      "cwd": "C:/Users/User/Documents/GitHub/Only"
     },
     {
       "name": "only-painel-impressora",
       "script": "monitor-server.mjs",
-      "cwd": "C:/Users/Micro/Documents/GitHub/Only"
+      "cwd": "C:/Users/User/Documents/GitHub/Only"
     }
   ]
 }
