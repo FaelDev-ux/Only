@@ -76,7 +76,5 @@ out/
 .dataconnect
 
 # Firebase service account
-bolodemaejp-firebase-adminsdk-fbsvc-716f3e8198.json
+*-firebase-adminsdk-*.json
 service-account.json
-bolodemaejp-firebase-adminsdk-fbsvc-272837c0ba.json
-bolodemaejp-firebase-adminsdk-fbsvc-7731f02cec.json

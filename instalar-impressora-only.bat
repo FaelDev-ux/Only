@@ -67,7 +67,7 @@ call pm2-startup install
 if errorlevel 1 goto :fail
 
 echo [5/6] Subindo os processos da impressora...
-call pm2 start ecosystem.config.json
+call pm2 startOrRestart ecosystem.config.json --update-env
 if errorlevel 1 goto :fail
 
 echo [6/6] Salvando a configuracao do PM2...

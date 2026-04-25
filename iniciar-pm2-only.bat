@@ -14,5 +14,5 @@ if exist "%APPDATA%\npm\pm2.cmd" (
 )
 
 call "%PM2%" resurrect
-call "%PM2%" startOrRestart ecosystem.config.json
+call "%PM2%" startOrRestart ecosystem.config.json --update-env
 call "%PM2%" save
