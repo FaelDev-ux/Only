@@ -14,6 +14,18 @@ import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
 import { subscribeToUserAccess, syncUserProfile } from "../lib/access-control";
 import {
+  InventoryError,
+  createRecordWithStock,
+  getProductStock,
+  getProductStockText,
+  isActiveStockItem,
+  makeLineId,
+  normalizeLineItems,
+  productHasStock,
+  productTracksStock,
+  updateRecordItemsWithStock,
+} from "../lib/inventory";
+import {
   buildGroupedProducts,
   describeAdminAuthError,
   formatDisplayPrice,
@@ -96,6 +108,9 @@ function buildPickerProduct(product) {
     image: product?.image || "",
     subProducts: normalizeSubProducts(product?.subProducts),
     selectedSubProduct: "",
+    trackStock: productTracksStock(product),
+    stock: getProductStock(product),
+    minStock: product?.minStock || 0,
   };
 }
 
@@ -103,10 +118,15 @@ function buildSaleItem(product, selectedSubProduct = "") {
   const option = selectedSubProduct.trim();
 
   return {
+    lineId: makeLineId("sale"),
+    productId: product.id,
+    productTitle: product.title,
+    option,
     title: option ? `${product.title} - ${option}` : product.title,
     price: product.price,
     image: product.image || "",
     qty: 1,
+    status: "active",
   };
 }
 
@@ -157,7 +177,7 @@ function buildSoldItemsSummary(records) {
   const summary = new Map();
 
   records.forEach((record) => {
-    (record.items || []).forEach((item) => {
+    (record.items || []).filter(isActiveStockItem).forEach((item) => {
       const title = String(item?.title || "Item sem nome").trim();
       if (!title) return;
 
@@ -257,6 +277,8 @@ export default function CashPage() {
   const [saleForm, setSaleForm] = useState(initialSaleForm);
   const [saleCart, setSaleCart] = useState([]);
   const [pickerProduct, setPickerProduct] = useState(null);
+  const [exchangeTarget, setExchangeTarget] = useState(null);
+  const [exchangeProduct, setExchangeProduct] = useState(null);
   const [openingAmountText, setOpeningAmountText] = useState("0,00");
   const [submittingSale, setSubmittingSale] = useState(false);
   const [openingSession, setOpeningSession] = useState(false);
@@ -535,7 +557,98 @@ export default function CashPage() {
     [selectedHistorySession, orders, cashSales]
   );
 
+  const sessionRecords = useMemo(
+    () =>
+      [
+        ...sessionOrders.map((record) => ({
+          ...record,
+          recordType: "order",
+          typeLabel: "Pedido online",
+          customerName: record.customer?.name || "Cliente",
+          payment: record.customer?.payment || "Sem pagamento",
+        })),
+        ...sessionCashSales.map((record) => ({
+          ...record,
+          recordType: "cashSale",
+          typeLabel: "Venda no caixa",
+          customerName: record.customerName || "Balcao",
+          payment: record.payment || "Sem pagamento",
+        })),
+      ].sort((a, b) => getDocTime(b.createdAt) - getDocTime(a.createdAt)),
+    [sessionCashSales, sessionOrders]
+  );
+
+  function getProductById(productId) {
+    return products.find((product) => product.id === productId) || null;
+  }
+
+  function getSaleCartQtyForProduct(productId) {
+    return saleCart.reduce((sum, item) => {
+      if (item.productId !== productId) return sum;
+      return sum + Number(item.qty || 0);
+    }, 0);
+  }
+
+  function canAddSaleProductQty(productId, qty = 1) {
+    const product = getProductById(productId);
+    if (!productTracksStock(product)) return true;
+    return getSaleCartQtyForProduct(productId) + qty <= getProductStock(product);
+  }
+
+  function buildRecordPatch(record, nextItems) {
+    const subtotal = nextItems
+      .filter(isActiveStockItem)
+      .reduce((sum, item) => sum + parsePrice(item.price || 0) * Number(item.qty || 0), 0);
+    const discount = Math.min(Number(record.discount || 0), subtotal);
+    const surcharge = Number(record.surcharge || 0);
+
+    return {
+      subtotal,
+      discount,
+      surcharge,
+      total: Math.max(0, subtotal - discount + surcharge),
+    };
+  }
+
+  function getCollectionName(recordType) {
+    return recordType === "cashSale" ? "cashSales" : "orders";
+  }
+
+  function getSourceName(recordType) {
+    return recordType === "cashSale" ? "cashSale" : "order";
+  }
+
+  function requestItemQuantity(item, actionLabel, { confirmSingle = false } = {}) {
+    const maxQty = Math.max(1, Math.floor(Number(item?.qty || 1)));
+
+    if (maxQty === 1) {
+      if (!confirmSingle) return 1;
+      return window.confirm(`Deseja ${actionLabel} 1x ${item.title}?`) ? 1 : null;
+    }
+
+    const answer = window.prompt(
+      `Quantas unidades deseja ${actionLabel}?`,
+      "1"
+    );
+
+    if (answer === null) return null;
+
+    const requestedQty = Math.floor(Number(answer.replace(",", ".")));
+
+    if (!Number.isFinite(requestedQty) || requestedQty < 1 || requestedQty > maxQty) {
+      setNoticeMessage(`Informe uma quantidade entre 1 e ${maxQty}.`);
+      return null;
+    }
+
+    return requestedQty;
+  }
+
   function addItemToSale(item) {
+    if (!canAddSaleProductQty(item.productId, item.qty || 1)) {
+      setNoticeMessage(`${item.productTitle || item.title} nao tem estoque suficiente.`);
+      return;
+    }
+
     setSaleCart((current) => {
       const existing = current.find((entry) => entry.title === item.title);
 
@@ -555,6 +668,11 @@ export default function CashPage() {
       return;
     }
 
+    if (!productHasStock(product, 1)) {
+      setNoticeMessage(`${product.title} esta sem estoque.`);
+      return;
+    }
+
     const nextProduct = buildPickerProduct(product);
 
     if (nextProduct.subProducts.length > 0) {
@@ -566,6 +684,14 @@ export default function CashPage() {
   }
 
   function updateSaleQty(title, delta) {
+    if (delta > 0) {
+      const currentItem = saleCart.find((item) => item.title === title);
+      if (currentItem && !canAddSaleProductQty(currentItem.productId, delta)) {
+        setNoticeMessage(`${currentItem.productTitle || currentItem.title} nao tem estoque suficiente.`);
+        return;
+      }
+    }
+
     setSaleCart((current) =>
       current
         .map((item) => (item.title === title ? { ...item, qty: item.qty + delta } : item))
@@ -686,17 +812,33 @@ export default function CashPage() {
 
     try {
       const items = saleCart.map((item) => ({
+        lineId: item.lineId || makeLineId("sale"),
+        productId: item.productId || "",
+        productTitle: item.productTitle || item.title,
+        option: item.option || "",
         title: item.title,
         price: item.price,
         qty: item.qty,
         image: item.image || "",
+        status: "active",
       }));
       const orderCode = generateOrderCode();
 
-      await addDoc(cashSalesCollection, {
+      const saleRef = doc(cashSalesCollection);
+
+      await createRecordWithStock({
+        db,
+        recordRef: saleRef,
+        items,
+        source: "cashSale",
+        sourceCode: orderCode,
+        actor: {
+          name: authState.name,
+          email: authState.email,
+        },
+        recordData: {
         orderCode,
         sessionId: activeSession.id,
-        items,
         subtotal: saleCartSubtotal,
         discount: saleDiscount,
         surcharge: saleSurcharge,
@@ -706,6 +848,7 @@ export default function CashPage() {
         notes: saleForm.notes.trim(),
         source: "caixa",
         createdAt: serverTimestamp(),
+        },
       });
 
       setSaleCart([]);
@@ -713,9 +856,213 @@ export default function CashPage() {
       setNoticeMessage("Venda registrada no caixa com sucesso.");
     } catch (error) {
       console.error(error);
-      setNoticeMessage("Nao foi possivel registrar essa venda agora.");
+      setNoticeMessage(
+        error instanceof InventoryError
+          ? error.message
+          : "Nao foi possivel registrar essa venda agora."
+      );
     } finally {
       setSubmittingSale(false);
+    }
+  }
+
+  async function handleCancelRecordItem(recordType, record, itemIndex) {
+    const previousItems = normalizeLineItems(record.items);
+    const targetItem = previousItems[itemIndex];
+
+    if (!targetItem || !isActiveStockItem(targetItem)) return;
+
+    const qtyToCancel = requestItemQuantity(targetItem, "cancelar", { confirmSingle: true });
+    if (!qtyToCancel) return;
+
+    const targetQty = Math.max(1, Math.floor(Number(targetItem.qty || 1)));
+    const cancelledAt = new Date().toISOString();
+
+    const nextItems = previousItems.flatMap((item, index) => {
+      if (index !== itemIndex) return [item];
+
+      const cancelledItem = {
+        ...item,
+        qty: qtyToCancel,
+        status: "cancelled",
+        cancelledAt,
+        cancelledByName: authState.name,
+        cancelledByEmail: authState.email,
+      };
+
+      if (qtyToCancel >= targetQty) return [cancelledItem];
+
+      return [
+        {
+          ...item,
+          qty: targetQty - qtyToCancel,
+        },
+        {
+          ...cancelledItem,
+          lineId: makeLineId("cancelled"),
+          cancelledFromLineId: item.lineId,
+        },
+      ];
+    });
+
+    try {
+      const recordRef = doc(db, getCollectionName(recordType), record.id);
+
+      await updateRecordItemsWithStock({
+        db,
+        recordRef,
+        previousItems,
+        nextItems,
+        recordPatch: buildRecordPatch(record, nextItems),
+        reason: "cancelamento",
+        source: getSourceName(recordType),
+        sourceCode: record.orderCode || "",
+        actor: {
+          name: authState.name,
+          email: authState.email,
+        },
+      });
+
+      setNoticeMessage("Item cancelado e estoque devolvido.");
+    } catch (error) {
+      console.error(error);
+      setNoticeMessage(
+        error instanceof InventoryError
+          ? error.message
+          : "Nao foi possivel cancelar este item agora."
+      );
+    }
+  }
+
+  function openExchangeItem(recordType, record, itemIndex) {
+    const previousItems = normalizeLineItems(record.items);
+    const targetItem = previousItems[itemIndex];
+
+    if (!targetItem || !isActiveStockItem(targetItem)) return;
+
+    const qtyToExchange = requestItemQuantity(targetItem, "trocar");
+    if (!qtyToExchange) return;
+
+    setExchangeTarget({
+      recordType,
+      record,
+      itemIndex,
+      item: targetItem,
+      qty: qtyToExchange,
+    });
+    setExchangeProduct(null);
+  }
+
+  function closeExchangeModal() {
+    setExchangeTarget(null);
+    setExchangeProduct(null);
+  }
+
+  function chooseExchangeProduct(product) {
+    if (!exchangeTarget) return;
+
+    const exchangeQty = Math.max(1, Math.floor(Number(exchangeTarget.qty || 1)));
+    const sameProduct = exchangeTarget.item.productId === product.id;
+    if (!sameProduct && !productHasStock(product, exchangeQty)) {
+      setNoticeMessage(`${product.title} esta sem estoque.`);
+      return;
+    }
+
+    const nextProduct = buildPickerProduct(product);
+
+    if (nextProduct.subProducts.length > 0) {
+      setExchangeProduct(nextProduct);
+      return;
+    }
+
+    handleConfirmExchange(nextProduct, "");
+  }
+
+  async function handleConfirmExchange(product, selectedSubProduct = "") {
+    if (!exchangeTarget) return;
+
+    const previousItems = normalizeLineItems(exchangeTarget.record.items);
+    const targetItem = previousItems[exchangeTarget.itemIndex];
+    if (!targetItem || !isActiveStockItem(targetItem)) return;
+
+    const targetQty = Math.max(1, Math.floor(Number(targetItem.qty || 1)));
+    const exchangeQty = Math.min(
+      targetQty,
+      Math.max(1, Math.floor(Number(exchangeTarget.qty || 1)))
+    );
+    const exchangedAt = new Date().toISOString();
+    const replacement = {
+      ...buildSaleItem(product, selectedSubProduct),
+      qty: exchangeQty,
+      exchangedFromLineId: targetItem.lineId,
+      exchangedFromTitle: targetItem.title,
+      exchangedAt,
+      exchangedByName: authState.name,
+      exchangedByEmail: authState.email,
+    };
+
+    const nextItems = [
+      ...previousItems.flatMap((item, index) => {
+        if (index !== exchangeTarget.itemIndex) return [item];
+
+        const replacedItem = {
+          ...item,
+          qty: exchangeQty,
+          status: "replaced",
+          replacedByLineId: replacement.lineId,
+          replacedAt: exchangedAt,
+          replacedByName: authState.name,
+          replacedByEmail: authState.email,
+        };
+
+        if (exchangeQty >= targetQty) return [replacedItem];
+
+        return [
+          {
+            ...item,
+            qty: targetQty - exchangeQty,
+          },
+          {
+            ...replacedItem,
+            lineId: makeLineId("replaced"),
+            replacedFromLineId: item.lineId,
+          },
+        ];
+      }),
+      replacement,
+    ];
+
+    try {
+      const recordRef = doc(
+        db,
+        getCollectionName(exchangeTarget.recordType),
+        exchangeTarget.record.id
+      );
+
+      await updateRecordItemsWithStock({
+        db,
+        recordRef,
+        previousItems,
+        nextItems,
+        recordPatch: buildRecordPatch(exchangeTarget.record, nextItems),
+        reason: "troca",
+        source: getSourceName(exchangeTarget.recordType),
+        sourceCode: exchangeTarget.record.orderCode || "",
+        actor: {
+          name: authState.name,
+          email: authState.email,
+        },
+      });
+
+      closeExchangeModal();
+      setNoticeMessage("Troca registrada e estoque ajustado.");
+    } catch (error) {
+      console.error(error);
+      setNoticeMessage(
+        error instanceof InventoryError
+          ? error.message
+          : "Nao foi possivel trocar este item agora."
+      );
     }
   }
 
@@ -910,7 +1257,7 @@ export default function CashPage() {
                 className={`cash-section-tab${activeSection === "orders" ? " is-active" : ""}`}
                 onClick={() => setActiveSection("orders")}
               >
-                Pedidos do cardapio
+                Pedidos e vendas
               </button>
               <button
                 type="button"
@@ -1115,22 +1462,31 @@ export default function CashPage() {
                     <div key={category} className="cash-category-block">
                       <h3>{category}</h3>
                       <div className="cash-product-grid">
-                        {categoryProducts.map((product) => (
-                          <button
-                            key={product.id}
-                            type="button"
-                            className="cash-product-button"
-                            onClick={() => handleAddProduct(product)}
-                          >
-                            <span>{product.title}</span>
-                            <strong>{formatDisplayPrice(product.price)}</strong>
-                            {Array.isArray(product.subProducts) && product.subProducts.length > 0 ? (
-                              <small>{product.subProducts.length} opcoes</small>
-                            ) : (
-                              <small>Adicionar direto</small>
-                            )}
-                          </button>
-                        ))}
+                        {categoryProducts.map((product) => {
+                          const outOfStock = !productHasStock(product, 1);
+
+                          return (
+                            <button
+                              key={product.id}
+                              type="button"
+                              className="cash-product-button"
+                              onClick={() => handleAddProduct(product)}
+                              disabled={outOfStock}
+                            >
+                              <span>{product.title}</span>
+                              <strong>{formatDisplayPrice(product.price)}</strong>
+                              {productTracksStock(product) ? (
+                                <small className={outOfStock ? "stock-low" : ""}>
+                                  {getProductStockText(product)}
+                                </small>
+                              ) : Array.isArray(product.subProducts) && product.subProducts.length > 0 ? (
+                                <small>{product.subProducts.length} opcoes</small>
+                              ) : (
+                                <small>Adicionar direto</small>
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
@@ -1197,20 +1553,20 @@ export default function CashPage() {
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Integracao com o cardapio</p>
-                  <h2>Pedidos da sessao</h2>
+                  <h2>Pedidos e vendas da sessao</h2>
                 </div>
                 <span className="pill">
-                  {ordersLoading ? "Atualizando..." : `${sessionOrders.length} pedidos`}
+                  {ordersLoading || salesLoading ? "Atualizando..." : `${sessionRecords.length} movimentos`}
                 </span>
               </div>
 
-              {sessionOrders.length === 0 ? (
+              {sessionRecords.length === 0 ? (
                 <div className="empty-state">
-                  Nenhum pedido do cardapio entrou durante a sessao atual.
+                  Nenhum pedido ou venda entrou durante a sessao atual.
                 </div>
               ) : (
                 <div className="order-list">
-                  {sessionOrders.slice(0, 10).map((order) => (
+                  {sessionRecords.slice(0, 14).map((order) => (
                     <article className="order-card" key={order.id}>
                       <div className="order-card-top">
                         <strong>
@@ -1220,13 +1576,49 @@ export default function CashPage() {
                         <span>{formatDateTime(order.createdAt)}</span>
                       </div>
                       <small>
-                        {order.items?.length || 0} itens - {order.customer?.payment || "Sem pagamento"}
+                        {order.typeLabel} - {order.payment}
                       </small>
-                      <p className="order-card-lines">
-                        {(order.items || []).map((item) => `${item.qty}x ${item.title}`).join(" - ")}
-                      </p>
+                      <div className="record-item-list">
+                        {normalizeLineItems(order.items).map((item, index) => {
+                          const activeItem = isActiveStockItem(item);
+
+                          return (
+                            <div
+                              className={`record-item-line${activeItem ? "" : " is-inactive"}`}
+                              key={item.lineId || `${order.id}-${index}`}
+                            >
+                              <div>
+                                <strong>{item.qty}x {item.title}</strong>
+                                <small>
+                                  {activeItem
+                                    ? item.price
+                                    : item.status === "cancelled"
+                                      ? "Cancelado"
+                                      : "Trocado"}
+                                </small>
+                              </div>
+                              {activeItem ? (
+                                <div className="record-item-actions">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelRecordItem(order.recordType, order, index)}
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openExchangeItem(order.recordType, order, index)}
+                                  >
+                                    Trocar
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
                       <div className="order-card-bottom">
-                        <span>{order.customer?.phone || "Sem telefone"}</span>
+                        <span>{order.customer?.phone || order.customerName || "Sem telefone"}</span>
                         <strong>{formatPrice(Number(order.total || 0))}</strong>
                       </div>
                       {(Number(order.discount || 0) > 0 || Number(order.surcharge || 0) > 0) ? (
@@ -1368,6 +1760,112 @@ export default function CashPage() {
                 ? `Adicionar ${pickerProduct.selectedSubProduct}`
                 : "Escolha uma opcao"}
             </button>
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        className={`modal${exchangeTarget ? " is-open" : ""}`}
+        aria-hidden={exchangeTarget ? "false" : "true"}
+      >
+        <div className="modal-backdrop" onClick={closeExchangeModal} />
+        {exchangeTarget ? (
+          <div
+            className="modal-card modal-card-wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exchange-title"
+          >
+            <button
+              className="modal-close"
+              type="button"
+              aria-label="Fechar"
+              onClick={closeExchangeModal}
+            >
+              x
+            </button>
+
+            <div className="modal-content">
+              <p className="eyebrow">Troca de item</p>
+              <h3 id="exchange-title">
+                {exchangeTarget.qty}x {exchangeTarget.item.title}
+              </h3>
+              <p className="modal-details">
+                Escolha o novo produto. A quantidade escolhida volta para o estoque e o novo sai
+                automaticamente.
+              </p>
+            </div>
+
+            <div className="cash-product-groups">
+              {groupedProducts.map(({ category, products: categoryProducts }) => (
+                <div key={category} className="cash-category-block">
+                  <h3>{category}</h3>
+                  <div className="cash-product-grid">
+                    {categoryProducts.map((product) => {
+                      const sameProduct = exchangeTarget.item.productId === product.id;
+                      const outOfStock =
+                        !sameProduct && !productHasStock(product, exchangeTarget.qty || 1);
+
+                      return (
+                        <button
+                          key={product.id}
+                          type="button"
+                          className="cash-product-button"
+                          onClick={() => chooseExchangeProduct(product)}
+                          disabled={outOfStock}
+                        >
+                          <span>{product.title}</span>
+                          <strong>{formatDisplayPrice(product.price)}</strong>
+                          {productTracksStock(product) ? (
+                            <small className={outOfStock ? "stock-low" : ""}>
+                              {sameProduct ? "Mesmo produto" : getProductStockText(product)}
+                            </small>
+                          ) : Array.isArray(product.subProducts) && product.subProducts.length > 0 ? (
+                            <small>{product.subProducts.length} opcoes</small>
+                          ) : (
+                            <small>Trocar para este item</small>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {exchangeProduct ? (
+              <div className="modal-options">
+                <p className="modal-options-label">Escolha a variacao</p>
+                <div className="modal-options-grid">
+                  {exchangeProduct.subProducts.map((subProduct) => (
+                    <button
+                      key={subProduct}
+                      type="button"
+                      className={`modal-option-button${
+                        exchangeProduct.selectedSubProduct === subProduct ? " is-selected" : ""
+                      }`}
+                      onClick={() =>
+                        setExchangeProduct((current) =>
+                          current ? { ...current, selectedSubProduct: subProduct } : current
+                        )
+                      }
+                    >
+                      {subProduct}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="modal-add"
+                  type="button"
+                  disabled={!exchangeProduct.selectedSubProduct}
+                  onClick={() =>
+                    handleConfirmExchange(exchangeProduct, exchangeProduct.selectedSubProduct)
+                  }
+                >
+                  Confirmar troca
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

@@ -8,12 +8,20 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
-  setDoc,
   where,
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
 import { getUserAccessProfile, syncUserProfile } from "../lib/access-control";
+import {
+  InventoryError,
+  createRecordWithStock,
+  getProductStock,
+  getProductStockText,
+  makeLineId,
+  productHasStock,
+  productTracksStock,
+} from "../lib/inventory";
 import {
   SEND_TO_CUSTOMER,
   STORE_WHATSAPP,
@@ -66,6 +74,9 @@ function buildModalProduct(product) {
     image: product?.image || "",
     subProducts,
     selectedSubProduct: "",
+    trackStock: productTracksStock(product),
+    stock: getProductStock(product),
+    minStock: product?.minStock || 0,
   };
 }
 
@@ -73,9 +84,14 @@ function buildCartItem(product, selectedSubProduct = "") {
   const selectedOption = selectedSubProduct.trim();
 
   return {
+    lineId: makeLineId("cart"),
+    productId: product.id,
+    productTitle: product.title,
+    option: selectedOption,
     title: selectedOption ? `${product.title} - ${selectedOption}` : product.title,
     price: product.price,
     image: product.image || "",
+    status: "active",
   };
 }
 
@@ -241,6 +257,23 @@ export default function MenuPage() {
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
   const cartTotal = cart.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
 
+  function getProductById(productId) {
+    return products.find((product) => product.id === productId) || null;
+  }
+
+  function getCartQtyForProduct(productId) {
+    return cart.reduce((sum, item) => {
+      if (item.productId !== productId) return sum;
+      return sum + Number(item.qty || 0);
+    }, 0);
+  }
+
+  function canAddProductQty(productId, qty = 1) {
+    const product = getProductById(productId);
+    if (!productTracksStock(product)) return true;
+    return getCartQtyForProduct(productId) + qty <= getProductStock(product);
+  }
+
   function openProductModal(product) {
     setModalProduct(buildModalProduct(product));
   }
@@ -260,6 +293,11 @@ export default function MenuPage() {
   function addToCart(item) {
     if (!item?.title) return;
 
+    if (!canAddProductQty(item.productId, 1)) {
+      showCartToast(`${item.productTitle || item.title} nao tem estoque suficiente.`);
+      return;
+    }
+
     setCart((currentCart) => {
       const existing = currentCart.find((entry) => entry.title === item.title);
 
@@ -276,6 +314,14 @@ export default function MenuPage() {
   }
 
   function updateQty(title, delta) {
+    if (delta > 0) {
+      const currentItem = cart.find((item) => item.title === title);
+      if (currentItem && !canAddProductQty(currentItem.productId, delta)) {
+        showCartToast(`${currentItem.productTitle || currentItem.title} nao tem estoque suficiente.`);
+        return;
+      }
+    }
+
     setCart((currentCart) =>
       currentCart
         .map((item) => (item.title === title ? { ...item, qty: item.qty + delta } : item))
@@ -284,6 +330,11 @@ export default function MenuPage() {
   }
 
   function handleAddProduct(product) {
+    if (!productHasStock(product, 1)) {
+      showCartToast(`${product.title} esta sem estoque.`);
+      return;
+    }
+
     const modalData = buildModalProduct(product);
 
     if (modalData.subProducts.length > 0) {
@@ -378,10 +429,15 @@ export default function MenuPage() {
       }
 
       const items = cart.map((item) => ({
+        lineId: item.lineId || makeLineId("order"),
+        productId: item.productId || "",
+        productTitle: item.productTitle || item.title,
+        option: item.option || "",
         title: item.title,
         price: item.price,
         qty: item.qty,
         image: item.image || "",
+        status: "active",
       }));
 
       const totalValue = items.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
@@ -403,15 +459,25 @@ export default function MenuPage() {
       const orderRef = doc(ordersCollection);
       const orderCode = generateOrderCode();
 
-      await setDoc(orderRef, {
-        orderCode,
+      await createRecordWithStock({
+        db,
+        recordRef: orderRef,
         items,
+        source: "order",
+        sourceCode: orderCode,
+        actor: {
+          name: customer.name,
+          email: "",
+        },
+        recordData: {
+        orderCode,
         subtotal: totalValue,
         discount: 0,
         surcharge: 0,
         total: totalValue,
         customer,
         createdAt: serverTimestamp(),
+        },
       });
 
       const messageLines = [
@@ -458,7 +524,11 @@ export default function MenuPage() {
       setIsCartOpen(false);
     } catch (error) {
       console.error(error);
-      window.alert("Não foi possível enviar o pedido. Tente novamente.");
+      window.alert(
+        error instanceof InventoryError
+          ? error.message
+          : "Não foi possível enviar o pedido. Tente novamente."
+      );
     } finally {
       setCheckoutSubmitting(false);
     }
@@ -539,6 +609,7 @@ export default function MenuPage() {
                   {categoryProducts.map((product) => {
                     const priceText = formatDisplayPrice(product.price);
                     const image = product.image || "";
+                    const outOfStock = !productHasStock(product, 1);
 
                     return (
                       <li className="menu-item" key={product.id}>
@@ -563,6 +634,11 @@ export default function MenuPage() {
                           <div className="item-info">
                             <span>{product.title}</span>
                             <span className="price">{priceText}</span>
+                            {productTracksStock(product) ? (
+                              <small className={outOfStock ? "stock-low" : ""}>
+                                {getProductStockText(product)}
+                              </small>
+                            ) : null}
                           </div>
                         </button>
 
@@ -570,8 +646,11 @@ export default function MenuPage() {
                           className="add-to-cart"
                           type="button"
                           onClick={() => handleAddProduct(product)}
+                          disabled={outOfStock}
                         >
-                          {Array.isArray(product.subProducts) && product.subProducts.length > 0
+                          {outOfStock
+                            ? "Sem estoque"
+                            : Array.isArray(product.subProducts) && product.subProducts.length > 0
                             ? "Escolher opção"
                             : "Adicionar ao carrinho"}
                         </button>
@@ -663,7 +742,8 @@ export default function MenuPage() {
               className="modal-add"
               type="button"
               disabled={
-                modalProduct.subProducts.length > 0 && !modalProduct.selectedSubProduct
+                (modalProduct.subProducts.length > 0 && !modalProduct.selectedSubProduct) ||
+                !canAddProductQty(modalProduct.id, 1)
               }
               onClick={() => {
                 addToCart(buildCartItem(modalProduct, modalProduct.selectedSubProduct));
@@ -674,7 +754,9 @@ export default function MenuPage() {
                 ? modalProduct.selectedSubProduct
                   ? `Adicionar ${modalProduct.selectedSubProduct}`
                   : "Escolha uma opção"
-                : "Adicionar ao carrinho"}
+                : canAddProductQty(modalProduct.id, 1)
+                  ? "Adicionar ao carrinho"
+                  : "Sem estoque"}
             </button>
           </div>
         ) : null}
@@ -873,4 +955,3 @@ export default function MenuPage() {
     </>
   );
 }
-

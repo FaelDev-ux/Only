@@ -79,6 +79,12 @@ service cloud.firestore {
         && value.size() <= 20;
     }
 
+    function validStockNumber(value) {
+      return value is number
+        && value >= 0
+        && value <= 1000000;
+    }
+
     function validProductPayload() {
       return request.resource.data.keys().hasOnly([
           'title',
@@ -88,6 +94,9 @@ service cloud.firestore {
           'details',
           'subProducts',
           'available',
+          'trackStock',
+          'stock',
+          'minStock',
           'createdAt'
         ])
         && validShortText(request.resource.data.title, 120)
@@ -99,7 +108,62 @@ service cloud.firestore {
           !request.resource.data.keys().hasAny(['subProducts'])
           || validSubProductsField(request.resource.data.subProducts)
         )
-        && request.resource.data.available is bool;
+        && request.resource.data.available is bool
+        && (
+          !request.resource.data.keys().hasAny(['trackStock'])
+          || request.resource.data.trackStock is bool
+        )
+        && (
+          !request.resource.data.keys().hasAny(['stock'])
+          || validStockNumber(request.resource.data.stock)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['minStock'])
+          || validStockNumber(request.resource.data.minStock)
+        );
+    }
+
+    function validPublicStockDecrease() {
+      return resource.data.trackStock == true
+        && resource.data.stock is number
+        && validProductPayload()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock'])
+        && request.resource.data.stock is number
+        && request.resource.data.stock >= 0
+        && request.resource.data.stock < resource.data.stock;
+    }
+
+    function validStockMovementPayload() {
+      return request.resource.data.keys().hasOnly([
+          'productId',
+          'productTitle',
+          'qty',
+          'delta',
+          'type',
+          'reason',
+          'source',
+          'sourceId',
+          'sourceCode',
+          'actorName',
+          'actorEmail',
+          'createdAt'
+        ])
+        && validShortText(request.resource.data.productId, 120)
+        && validShortText(request.resource.data.productTitle, 120)
+        && request.resource.data.qty is number
+        && request.resource.data.qty > 0
+        && request.resource.data.qty <= 1000000
+        && request.resource.data.delta is number
+        && request.resource.data.delta != 0
+        && request.resource.data.delta >= -1000000
+        && request.resource.data.delta <= 1000000
+        && request.resource.data.type in ['entrada', 'saida']
+        && request.resource.data.reason in ['venda', 'cancelamento', 'troca', 'ajuste_manual']
+        && request.resource.data.source in ['order', 'cashSale', 'admin']
+        && validShortText(request.resource.data.sourceId, 120)
+        && validOptionalText(request.resource.data.sourceCode, 30)
+        && validOptionalText(request.resource.data.actorName, 120)
+        && validOptionalText(request.resource.data.actorEmail, 200);
     }
 
     function validCustomerPayload() {
@@ -320,8 +384,20 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow read: if canAccessCash() || resource.data.available == true;
-      allow create, update: if isAdmin() && validProductPayload();
+      allow create: if isAdmin() && validProductPayload();
+      allow update: if (isAdmin() && validProductPayload()) || validPublicStockDecrease();
       allow delete: if isAdmin();
+    }
+
+    match /stockMovements/{movementId} {
+      allow read: if canAccessCash();
+      allow create: if validStockMovementPayload()
+        && (
+          isAdmin()
+          || canAccessCash()
+          || request.resource.data.reason == 'venda'
+        );
+      allow update, delete: if false;
     }
 
     match /orders/{orderId} {

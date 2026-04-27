@@ -15,6 +15,12 @@ import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
 import { subscribeToUserAccess, syncUserProfile } from "../lib/access-control";
 import {
+  getProductStockText,
+  normalizeStockNumber,
+  productTracksStock,
+  updateProductWithStockMovement,
+} from "../lib/inventory";
+import {
   describeAdminAuthError,
   formatDisplayPrice,
 } from "../lib/store-utils";
@@ -29,6 +35,9 @@ const initialFormState = {
   details: "",
   subProductsText: "",
   available: true,
+  trackStock: false,
+  stock: "",
+  minStock: "",
 };
 
 const MAX_IMAGE_DATA_URL_LENGTH = 450000;
@@ -117,6 +126,9 @@ function buildFormStateFromProduct(product) {
     details: product?.details || "",
     subProductsText: Array.isArray(product?.subProducts) ? product.subProducts.join("\n") : "",
     available: product?.available !== false,
+    trackStock: productTracksStock(product),
+    stock: product?.stock ?? "",
+    minStock: product?.minStock ?? "",
   };
 }
 
@@ -298,6 +310,9 @@ export default function AdminPage() {
       details: formData.details.trim(),
       subProducts: parseSubProductsText(formData.subProductsText),
       available: Boolean(formData.available),
+      trackStock: Boolean(formData.trackStock),
+      stock: normalizeStockNumber(formData.stock, 0),
+      minStock: normalizeStockNumber(formData.minStock, 0),
     };
 
     if (!product.title || !product.category || !product.price) {
@@ -309,8 +324,17 @@ export default function AdminPage() {
 
     try {
       if (editingProductId) {
-        const productRef = doc(db, "products", editingProductId);
-        await updateDoc(productRef, product);
+        const previousProduct = products.find((item) => item.id === editingProductId) || {};
+        await updateProductWithStockMovement({
+          db,
+          productId: editingProductId,
+          product,
+          previousProduct,
+          actor: {
+            name: authState.name,
+            email: authState.email,
+          },
+        });
       } else {
         await addDoc(productsCollection, {
           ...product,
@@ -633,6 +657,44 @@ export default function AdminPage() {
                 Disponivel no cardapio
               </label>
 
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  name="trackStock"
+                  checked={formData.trackStock}
+                  onChange={handleFieldChange}
+                />
+                Controlar estoque deste produto
+              </label>
+
+              <div className="inventory-grid full">
+                <label>
+                  Quantidade em estoque
+                  <input
+                    type="number"
+                    name="stock"
+                    min="0"
+                    step="1"
+                    value={formData.stock}
+                    onChange={handleFieldChange}
+                    disabled={!formData.trackStock}
+                  />
+                </label>
+
+                <label>
+                  Alerta de estoque baixo
+                  <input
+                    type="number"
+                    name="minStock"
+                    min="0"
+                    step="1"
+                    value={formData.minStock}
+                    onChange={handleFieldChange}
+                    disabled={!formData.trackStock}
+                  />
+                </label>
+              </div>
+
               <button type="submit" disabled={submitting}>
                 {submitting
                   ? "Salvando..."
@@ -674,6 +736,10 @@ export default function AdminPage() {
                     </small>
                     <br />
                     <small>{product.available ? "Disponivel" : "Indisponivel"}</small>
+                    <br />
+                    <small className={productTracksStock(product) && product.stock <= product.minStock ? "stock-low" : ""}>
+                      {getProductStockText(product)}
+                    </small>
                   </div>
 
                   <div className="product-actions">
