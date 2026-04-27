@@ -189,3 +189,11 @@ Ainda nao ha historico antigo consolidado.
 - Feito: registrado que os dois arquivos de contexto podem subir neste commit por autorizacao explicita do usuario, apesar da regra anterior de manter contextos locais; registrado que, como `teste.mjs` mudou para escutar `printRequests`, a maquina da impressora precisa puxar a versao nova e reiniciar o PM2.
 - Validacao: `node --check teste.mjs`, `git diff --check` e `npm run build` executados com sucesso antes do commit.
 - Observacao/feedback do usuario: na empresa, depois de atualizar o codigo e envs, rodar `pm2 startOrRestart ecosystem.config.json --update-env` ou usar os `.bat` atualizados para garantir que `only-impressora` carregue o `teste.mjs` novo e as variaveis como `FIREBASE_SERVICE_ACCOUNT_KEY_PATH`. Commit local criado em `main`; push remoto via `git push origin main` falhou por falta de credencial GitHub no terminal (`could not read Username for 'https://github.com'`).
+
+### 2026-04-27 - PM2 atualizado e impressora testada
+
+- Pedido: ler o contexto, atualizar o PM2 e testar a impressora.
+- Arquivos alterados: `CONTEXTO.md`.
+- Feito: processos `only-impressora` e `only-painel-impressora` reiniciados com `pm2 startOrRestart ecosystem.config.json --update-env`; estado salvo com `pm2 save`; impressora `elgin-i7` confirmada no Windows em `USB001` com status `Normal`; criado teste real em `printRequests` e o listener do PM2 imprimiu/marcou como `printed`.
+- Validacao: `pm2 status`, `pm2 logs only-impressora --lines 20 --nostream`, `node --check teste.mjs`, `Get-Printer -Name "elgin-i7"` e consulta da fila de impressao sem jobs pendentes.
+- Observacao/feedback do usuario: teste usado no Firestore: `TESTE-IMPRESSORA-20260427182431`.
