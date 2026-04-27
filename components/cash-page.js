@@ -38,6 +38,7 @@ const productsCollection = collection(db, "products");
 const ordersCollection = collection(db, "orders");
 const cashSalesCollection = collection(db, "cashSales");
 const cashSessionsCollection = collection(db, "cashSessions");
+const printRequestsCollection = collection(db, "printRequests");
 
 const initialSaleForm = {
   customerName: "",
@@ -281,6 +282,7 @@ export default function CashPage() {
   const [exchangeProduct, setExchangeProduct] = useState(null);
   const [openingAmountText, setOpeningAmountText] = useState("0,00");
   const [submittingSale, setSubmittingSale] = useState(false);
+  const [printingRecordId, setPrintingRecordId] = useState("");
   const [openingSession, setOpeningSession] = useState(false);
   const [closingSession, setClosingSession] = useState(false);
   const [noticeMessage, setNoticeMessage] = useState("");
@@ -616,6 +618,63 @@ export default function CashPage() {
 
   function getSourceName(recordType) {
     return recordType === "cashSale" ? "cashSale" : "order";
+  }
+
+  function getActivePrintItems(items) {
+    return normalizeLineItems(items)
+      .filter(isActiveStockItem)
+      .map((item) => ({
+        lineId: item.lineId || "",
+        productId: item.productId || "",
+        productTitle: item.productTitle || item.title || "",
+        option: item.option || "",
+        title: item.title || "Item sem nome",
+        price: item.price || "0",
+        qty: Number(item.qty || 1),
+        image: item.image || "",
+        status: "active",
+      }));
+  }
+
+  function buildPrintPayload(recordType, record) {
+    const activeItems = getActivePrintItems(record.items);
+    const fallbackSubtotal = activeItems.reduce(
+      (sum, item) => sum + parsePrice(item.price || 0) * Number(item.qty || 0),
+      0
+    );
+
+    const subtotal = Number(record.subtotal ?? fallbackSubtotal);
+    const discount = Number(record.discount || 0);
+    const surcharge = Number(record.surcharge || 0);
+    const total = Number(record.total ?? Math.max(0, subtotal - discount + surcharge));
+
+    if (recordType === "cashSale") {
+      return {
+        orderCode: record.orderCode || String(record.id || "").slice(0, 8).toUpperCase(),
+        items: activeItems,
+        subtotal,
+        discount,
+        surcharge,
+        total,
+        customerName: record.customerName || "Balcao",
+        payment: record.payment || "Sem pagamento",
+        notes: record.notes || "",
+        source: "cashSale",
+        createdAt: record.createdAt || null,
+      };
+    }
+
+    return {
+      orderCode: record.orderCode || String(record.id || "").slice(0, 8).toUpperCase(),
+      items: activeItems,
+      subtotal,
+      discount,
+      surcharge,
+      total,
+      customer: record.customer || {},
+      source: "order",
+      createdAt: record.createdAt || null,
+    };
   }
 
   function requestItemQuantity(item, actionLabel, { confirmSingle = false } = {}) {
@@ -1063,6 +1122,40 @@ export default function CashPage() {
           ? error.message
           : "Nao foi possivel trocar este item agora."
       );
+    }
+  }
+
+  async function handleRequestPrint(recordType, record) {
+    const requestKey = `${recordType}-${record.id}`;
+    const payload = buildPrintPayload(recordType, record);
+
+    if (!payload.items.length) {
+      setNoticeMessage("Nao ha itens ativos para imprimir neste movimento.");
+      return;
+    }
+
+    setPrintingRecordId(requestKey);
+
+    try {
+      await addDoc(printRequestsCollection, {
+        status: "pending",
+        source: getSourceName(recordType),
+        sourceId: record.id,
+        sourceCode: payload.orderCode,
+        payload,
+        requestedByName: authState.name,
+        requestedByEmail: authState.email,
+        requestedAt: serverTimestamp(),
+        printedAt: null,
+        errorMessage: "",
+      });
+
+      setNoticeMessage("Solicitacao de impressao enviada para a impressora local.");
+    } catch (error) {
+      console.error(error);
+      setNoticeMessage("Nao foi possivel solicitar a impressao agora.");
+    } finally {
+      setPrintingRecordId("");
     }
   }
 
@@ -1628,6 +1721,19 @@ export default function CashPage() {
                           {formatPrice(Number(order.surcharge || 0))}
                         </small>
                       ) : null}
+                      <div className="record-card-actions">
+                        <button
+                          type="button"
+                          onClick={() => handleRequestPrint(order.recordType, order)}
+                          disabled={printingRecordId === `${order.recordType}-${order.id}`}
+                        >
+                          {printingRecordId === `${order.recordType}-${order.id}`
+                            ? "Enviando..."
+                            : order.recordType === "cashSale"
+                              ? "Imprimir comprovante"
+                              : "Reimprimir pedido"}
+                        </button>
+                      </div>
                     </article>
                   ))}
                 </div>

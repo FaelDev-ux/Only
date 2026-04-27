@@ -166,6 +166,30 @@ service cloud.firestore {
         && validOptionalText(request.resource.data.actorEmail, 200);
     }
 
+    function validPrintRequestCreatePayload() {
+      return request.resource.data.keys().hasOnly([
+          'status',
+          'source',
+          'sourceId',
+          'sourceCode',
+          'payload',
+          'requestedByName',
+          'requestedByEmail',
+          'requestedAt',
+          'printedAt',
+          'errorMessage'
+        ])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.source in ['order', 'cashSale']
+        && validShortText(request.resource.data.sourceId, 120)
+        && validShortText(request.resource.data.sourceCode, 30)
+        && request.resource.data.payload is map
+        && validShortText(request.resource.data.requestedByName, 120)
+        && validShortText(request.resource.data.requestedByEmail, 200)
+        && request.resource.data.printedAt == null
+        && request.resource.data.errorMessage == '';
+    }
+
     function validCustomerPayload() {
       return request.resource.data.customer is map
         && request.resource.data.customer.keys().hasOnly([
@@ -397,6 +421,12 @@ service cloud.firestore {
           || canAccessCash()
           || request.resource.data.reason == 'venda'
         );
+      allow update, delete: if false;
+    }
+
+    match /printRequests/{requestId} {
+      allow read: if canAccessCash();
+      allow create: if canAccessCash() && validPrintRequestCreatePayload();
       allow update, delete: if false;
     }
 

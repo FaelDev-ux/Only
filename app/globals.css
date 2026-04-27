@@ -1380,7 +1380,8 @@ h1 {
   justify-content: flex-end;
 }
 
-.record-item-actions button {
+.record-item-actions button,
+.record-card-actions button {
   border: 1px solid rgba(214, 177, 122, 0.55);
   background: #fff7f1;
   color: #8b6a62;
@@ -1389,6 +1390,15 @@ h1 {
   cursor: pointer;
   font-size: 0.84rem;
   font-weight: 600;
+}
+
+.record-card-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.record-card-actions button {
+  padding: 9px 12px;
 }
 
 .cash-detail-layout {
