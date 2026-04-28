@@ -42,7 +42,7 @@ const printRequestsCollection = collection(db, "printRequests");
 
 const initialSaleForm = {
   customerName: "",
-  payment: "pix",
+  payment: "",
   discount: "",
   surcharge: "",
   notes: "",
@@ -868,6 +868,11 @@ export default function CashPage() {
       return;
     }
 
+    if (!normalizePayment(saleForm.payment)) {
+      setNoticeMessage("Selecione a forma de pagamento antes de fechar a venda.");
+      return;
+    }
+
     setSubmittingSale(true);
 
     try {
@@ -903,7 +908,7 @@ export default function CashPage() {
         discount: saleDiscount,
         surcharge: saleSurcharge,
         total: saleCartTotal,
-        payment: saleForm.payment,
+        payment: normalizePayment(saleForm.payment),
         customerName: saleForm.customerName.trim(),
         notes: saleForm.notes.trim(),
         source: "caixa",
@@ -1510,7 +1515,8 @@ export default function CashPage() {
 
                   <label>
                     Pagamento
-                    <select name="payment" value={saleForm.payment} onChange={handleSaleFieldChange}>
+                    <select name="payment" required value={saleForm.payment} onChange={handleSaleFieldChange}>
+                      <option value="">Selecione</option>
                       <option value="pix">Pix</option>
                       <option value="dinheiro">Dinheiro</option>
                       <option value="cartao">Cartao</option>
