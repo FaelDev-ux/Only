@@ -30,16 +30,26 @@ let initialSnapshotLoaded = false
 
 let db = null
 let ordersCollection = null
+let printRequestsCollection = null
 let updatePrintedStatus = null
+let updatePrintRequestStatus = null
 
 if (firestoreMode.mode === 'admin') {
   const adminApp = getOrCreateAdminApp(firestoreMode.serviceAccount)
   db = getAdminFirestore(adminApp)
   ordersCollection = db.collection('orders')
+  printRequestsCollection = db.collection('printRequests')
   updatePrintedStatus = async orderId => {
     await ordersCollection.doc(orderId).update({
       printCompleted: true,
       printedAt: Timestamp.now()
+    })
+  }
+  updatePrintRequestStatus = async (requestId, status, errorMessage = '') => {
+    await printRequestsCollection.doc(requestId).update({
+      status,
+      printedAt: status === 'printed' ? Timestamp.now() : null,
+      errorMessage
     })
   }
 } else {
@@ -51,6 +61,14 @@ if (firestoreMode.mode === 'admin') {
     await updateDoc(orderRef, {
       printCompleted: true,
       printedAt: new Date()
+    })
+  }
+  updatePrintRequestStatus = async (requestId, status, errorMessage = '') => {
+    const requestRef = doc(db, 'printRequests', requestId)
+    await updateDoc(requestRef, {
+      status,
+      printedAt: status === 'printed' ? new Date() : null,
+      errorMessage
     })
   }
 }
@@ -201,6 +219,8 @@ function normalizeItems(items = []) {
 
   items.forEach(rawItem => {
     const item = typeof rawItem === 'object' && rawItem ? rawItem : { title: String(rawItem), price: 0, qty: 1 }
+    if (item.status && item.status !== 'active') return
+
     const nome = firstFilled(item.title, item.nome, item.produto)
     const observacao = firstFilled(item.observacao, item.notes, '')
     const preco = toNumber(item.price ?? item.preco)
@@ -270,11 +290,12 @@ function getCustomerData(order = {}) {
     .join(' - ')
 
   return {
-    name: firstFilled(customer.name),
-    phone: firstFilled(customer.phone),
-    payment: firstFilled(customer.payment),
+    name: firstFilled(customer.name, order.customerName, 'Balcao'),
+    phone: firstFilled(customer.phone, ''),
+    payment: firstFilled(customer.payment, order.payment),
     address: address || 'Nao informado',
-    notes: firstFilled(customer.notes, '')
+    notes: firstFilled(customer.notes, order.notes, ''),
+    fulfillmentType: firstFilled(order.fulfillmentType, customer.fulfillmentType, '')
   }
 }
 
@@ -289,11 +310,17 @@ function formatDate(order = {}) {
   return new Date().toLocaleString('pt-BR')
 }
 
-function buildReceiptBuffer(order) {
+function buildReceiptBuffer(order, options = {}) {
   const customer = getCustomerData(order)
   const items = normalizeItems(order.items || [])
   const subtotal = toNumber(order.subtotal) || items.reduce((sum, item) => sum + item.preco * item.qtd, 0)
+  const discount = toNumber(order.discount)
+  const surcharge = toNumber(order.surcharge)
   const total = toNumber(order.total) || subtotal
+  const receiptTitle = firstFilled(options.title, order.receiptTitle, 'NOVO PEDIDO')
+  const source = firstFilled(options.source, order.source, '')
+  const isPickup = customer.fulfillmentType === 'pickup'
+  const showAddress = source !== 'cashSale' && !isPickup && customer.address !== 'Nao informado'
 
   const buffers = []
   buffers.push(Buffer.from([0x1b, 0x40]))
@@ -302,7 +329,7 @@ function buildReceiptBuffer(order) {
   buffers.push(textSize(2, 2))
   buffers.push(line('BOLO DE MAE JP'))
   buffers.push(textSize(1, 1))
-  buffers.push(line('NOVO PEDIDO'))
+  buffers.push(line(receiptTitle))
   buffers.push(bold(false))
   buffers.push(hr('='))
 
@@ -310,10 +337,17 @@ function buildReceiptBuffer(order) {
   buffers.push(bold(true))
   buffers.push(line(`PEDIDO: #${firstFilled(order.orderCode, order.id, '')}`))
   buffers.push(line(`DATA: ${formatDate(order)}`))
+  if (source !== 'cashSale') {
+    buffers.push(line(`TIPO: ${isPickup ? 'RETIRADA' : 'ENTREGA'}`))
+  }
   buffers.push(line(`CLIENTE: ${customer.name}`))
-  buffers.push(line(`CONTATO: ${customer.phone}`))
+  if (customer.phone && customer.phone !== 'Nao informado') {
+    buffers.push(line(`CONTATO: ${customer.phone}`))
+  }
   buffers.push(line(`PAGAMENTO: ${customer.payment}`))
-  buffers.push(line(`ENDERECO: ${customer.address}`))
+  if (showAddress) {
+    buffers.push(line(`ENDERECO: ${customer.address}`))
+  }
   buffers.push(bold(false))
 
   if (customer.notes && customer.notes !== 'Nao informado') {
@@ -341,6 +375,12 @@ function buildReceiptBuffer(order) {
   buffers.push(hr())
   buffers.push(bold(true))
   buffers.push(line(`SUBTOTAL: R$ ${formatMoney(subtotal)}`))
+  if (discount > 0) {
+    buffers.push(line(`DESCONTO: R$ ${formatMoney(discount)}`))
+  }
+  if (surcharge > 0) {
+    buffers.push(line(`ACRESCIMO: R$ ${formatMoney(surcharge)}`))
+  }
   buffers.push(textSize(2, 2))
   buffers.push(line(`TOTAL: R$ ${formatMoney(total)}`))
   buffers.push(textSize(1, 1))
@@ -464,12 +504,52 @@ async function printOrder(order) {
   await sendRawToPrinter(buffer, LOCAL_PRINTER_NAME)
 }
 
+async function printRequest(request) {
+  const payload = {
+    ...(request.payload || {}),
+    id: request.sourceId || request.id,
+    source: request.source
+  }
+  const title = request.source === 'cashSale' ? 'COMPROVANTE' : 'REIMPRESSAO'
+  const buffer = buildReceiptBuffer(payload, {
+    title,
+    source: request.source
+  })
+
+  await sendRawToPrinter(buffer, LOCAL_PRINTER_NAME)
+}
+
 async function markPrinted(orderId) {
   await updatePrintedStatus(orderId)
 }
 
 function shouldPrint(order) {
   return order.printCompleted !== true
+}
+
+function shouldPrintRequest(request) {
+  return request.status === 'pending'
+}
+
+async function handlePrintRequest(requestId, request) {
+  try {
+    console.log(`Imprimindo solicitacao ${request.sourceCode || requestId}...`)
+    await printRequest({ id: requestId, ...request })
+    await updatePrintRequestStatus(requestId, 'printed')
+    console.log(`Solicitacao ${request.sourceCode || requestId} marcada como impressa.`)
+  } catch (error) {
+    console.error(`Falha ao imprimir solicitacao ${request.sourceCode || requestId}:`, error)
+
+    try {
+      await updatePrintRequestStatus(
+        requestId,
+        'failed',
+        error?.message ? String(error.message).slice(0, 500) : 'Falha desconhecida'
+      )
+    } catch (updateError) {
+      console.error(`Falha ao marcar solicitacao ${request.sourceCode || requestId} como erro:`, updateError)
+    }
+  }
 }
 
 function startListening() {
@@ -504,10 +584,27 @@ function startListening() {
       console.error('Erro ao escutar pedidos do Firestore:', error)
     })
 
+    printRequestsCollection.orderBy('requestedAt', 'asc').onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(change => {
+        const requestId = change.doc.id
+        const request = { id: requestId, ...change.doc.data() }
+        const signature = `printRequest-${requestId}-${request.status || 'pending'}`
+
+        if ((change.type === 'added' || change.type === 'modified') && shouldPrintRequest(request)) {
+          if (processedIds.has(signature)) return
+          processedIds.add(signature)
+          handlePrintRequest(requestId, request)
+        }
+      })
+    }, error => {
+      console.error('Erro ao escutar solicitacoes de impressao:', error)
+    })
+
     return
   }
 
   const ordersQuery = query(collection(db, 'orders'), orderBy('createdAt', 'asc'))
+  const printRequestsQuery = query(collection(db, 'printRequests'), orderBy('requestedAt', 'asc'))
 
   onSnapshot(ordersQuery, snapshot => {
     snapshot.docChanges().forEach(async change => {
@@ -537,6 +634,22 @@ function startListening() {
     initialSnapshotLoaded = true
   }, error => {
     console.error('Erro ao escutar pedidos do Firestore:', error)
+  })
+
+  onSnapshot(printRequestsQuery, snapshot => {
+    snapshot.docChanges().forEach(change => {
+      const requestId = change.doc.id
+      const request = { id: requestId, ...change.doc.data() }
+      const signature = `printRequest-${requestId}-${request.status || 'pending'}`
+
+      if ((change.type === 'added' || change.type === 'modified') && shouldPrintRequest(request)) {
+        if (processedIds.has(signature)) return
+        processedIds.add(signature)
+        handlePrintRequest(requestId, request)
+      }
+    })
+  }, error => {
+    console.error('Erro ao escutar solicitacoes de impressao:', error)
   })
 }
 

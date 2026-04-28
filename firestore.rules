@@ -57,6 +57,11 @@ service cloud.firestore {
         && value in ['pix', 'dinheiro', 'cartao'];
     }
 
+    function validFulfillmentType(value) {
+      return value is string
+        && value in ['pickup', 'delivery'];
+    }
+
     function validImageField(value) {
       return value is string
         && value.size() <= 500000
@@ -79,6 +84,12 @@ service cloud.firestore {
         && value.size() <= 20;
     }
 
+    function validStockNumber(value) {
+      return value is number
+        && value >= 0
+        && value <= 1000000;
+    }
+
     function validProductPayload() {
       return request.resource.data.keys().hasOnly([
           'title',
@@ -88,6 +99,9 @@ service cloud.firestore {
           'details',
           'subProducts',
           'available',
+          'trackStock',
+          'stock',
+          'minStock',
           'createdAt'
         ])
         && validShortText(request.resource.data.title, 120)
@@ -99,11 +113,91 @@ service cloud.firestore {
           !request.resource.data.keys().hasAny(['subProducts'])
           || validSubProductsField(request.resource.data.subProducts)
         )
-        && request.resource.data.available is bool;
+        && request.resource.data.available is bool
+        && (
+          !request.resource.data.keys().hasAny(['trackStock'])
+          || request.resource.data.trackStock is bool
+        )
+        && (
+          !request.resource.data.keys().hasAny(['stock'])
+          || validStockNumber(request.resource.data.stock)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['minStock'])
+          || validStockNumber(request.resource.data.minStock)
+        );
+    }
+
+    function validPublicStockDecrease() {
+      return resource.data.trackStock == true
+        && resource.data.stock is number
+        && validProductPayload()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock'])
+        && request.resource.data.stock is number
+        && request.resource.data.stock >= 0
+        && request.resource.data.stock < resource.data.stock;
+    }
+
+    function validStockMovementPayload() {
+      return request.resource.data.keys().hasOnly([
+          'productId',
+          'productTitle',
+          'qty',
+          'delta',
+          'type',
+          'reason',
+          'source',
+          'sourceId',
+          'sourceCode',
+          'actorName',
+          'actorEmail',
+          'createdAt'
+        ])
+        && validShortText(request.resource.data.productId, 120)
+        && validShortText(request.resource.data.productTitle, 120)
+        && request.resource.data.qty is number
+        && request.resource.data.qty > 0
+        && request.resource.data.qty <= 1000000
+        && request.resource.data.delta is number
+        && request.resource.data.delta != 0
+        && request.resource.data.delta >= -1000000
+        && request.resource.data.delta <= 1000000
+        && request.resource.data.type in ['entrada', 'saida']
+        && request.resource.data.reason in ['venda', 'cancelamento', 'troca', 'ajuste_manual']
+        && request.resource.data.source in ['order', 'cashSale', 'admin']
+        && validShortText(request.resource.data.sourceId, 120)
+        && validOptionalText(request.resource.data.sourceCode, 30)
+        && validOptionalText(request.resource.data.actorName, 120)
+        && validOptionalText(request.resource.data.actorEmail, 200);
+    }
+
+    function validPrintRequestCreatePayload() {
+      return request.resource.data.keys().hasOnly([
+          'status',
+          'source',
+          'sourceId',
+          'sourceCode',
+          'payload',
+          'requestedByName',
+          'requestedByEmail',
+          'requestedAt',
+          'printedAt',
+          'errorMessage'
+        ])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.source in ['order', 'cashSale']
+        && validShortText(request.resource.data.sourceId, 120)
+        && validShortText(request.resource.data.sourceCode, 30)
+        && request.resource.data.payload is map
+        && validShortText(request.resource.data.requestedByName, 120)
+        && validShortText(request.resource.data.requestedByEmail, 200)
+        && request.resource.data.printedAt == null
+        && request.resource.data.errorMessage == '';
     }
 
     function validCustomerPayload() {
       return request.resource.data.customer is map
+        && validFulfillmentType(request.resource.data.fulfillmentType)
         && request.resource.data.customer.keys().hasOnly([
           'name',
           'phone',
@@ -120,10 +214,22 @@ service cloud.firestore {
         && validShortText(request.resource.data.customer.name, 120)
         && validShortText(request.resource.data.customer.phone, 20)
         && validPaymentValue(request.resource.data.customer.payment)
-        && validShortText(request.resource.data.customer.cep, 10)
-        && validShortText(request.resource.data.customer.address, 180)
-        && validShortText(request.resource.data.customer.addressNumber, 20)
-        && validShortText(request.resource.data.customer.district, 120)
+        && (
+          (
+            request.resource.data.fulfillmentType == 'delivery'
+            && validShortText(request.resource.data.customer.cep, 10)
+            && validShortText(request.resource.data.customer.address, 180)
+            && validShortText(request.resource.data.customer.addressNumber, 20)
+            && validShortText(request.resource.data.customer.district, 120)
+          )
+          || (
+            request.resource.data.fulfillmentType == 'pickup'
+            && validOptionalText(request.resource.data.customer.cep, 10)
+            && validOptionalText(request.resource.data.customer.address, 180)
+            && validOptionalText(request.resource.data.customer.addressNumber, 20)
+            && validOptionalText(request.resource.data.customer.district, 120)
+          )
+        )
         && validOptionalText(request.resource.data.customer.complement, 120)
         && validOptionalText(request.resource.data.customer.notes, 500)
         && validOptionalText(request.resource.data.customer.city, 120)
@@ -138,6 +244,7 @@ service cloud.firestore {
           'discount',
           'surcharge',
           'total',
+          'fulfillmentType',
           'customer',
           'createdAt',
           'printCompleted',
@@ -320,8 +427,26 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow read: if canAccessCash() || resource.data.available == true;
-      allow create, update: if isAdmin() && validProductPayload();
+      allow create: if isAdmin() && validProductPayload();
+      allow update: if (isAdmin() && validProductPayload()) || validPublicStockDecrease();
       allow delete: if isAdmin();
+    }
+
+    match /stockMovements/{movementId} {
+      allow read: if canAccessCash();
+      allow create: if validStockMovementPayload()
+        && (
+          isAdmin()
+          || canAccessCash()
+          || request.resource.data.reason == 'venda'
+        );
+      allow update, delete: if false;
+    }
+
+    match /printRequests/{requestId} {
+      allow read: if canAccessCash();
+      allow create: if canAccessCash() && validPrintRequestCreatePayload();
+      allow update, delete: if false;
     }
 
     match /orders/{orderId} {

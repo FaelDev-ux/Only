@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   addDoc,
   collection,
@@ -14,6 +14,12 @@ import {
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
 import { subscribeToUserAccess, syncUserProfile } from "../lib/access-control";
+import {
+  getProductStockText,
+  normalizeStockNumber,
+  productTracksStock,
+  updateProductWithStockMovement,
+} from "../lib/inventory";
 import {
   describeAdminAuthError,
   formatDisplayPrice,
@@ -29,6 +35,9 @@ const initialFormState = {
   details: "",
   subProductsText: "",
   available: true,
+  trackStock: false,
+  stock: "",
+  minStock: "",
 };
 
 const MAX_IMAGE_DATA_URL_LENGTH = 450000;
@@ -117,7 +126,19 @@ function buildFormStateFromProduct(product) {
     details: product?.details || "",
     subProductsText: Array.isArray(product?.subProducts) ? product.subProducts.join("\n") : "",
     available: product?.available !== false,
+    trackStock: productTracksStock(product),
+    stock: product?.stock ?? "",
+    minStock: product?.minStock ?? "",
   };
+}
+
+function getProductInventoryStatus(product) {
+  if (!productTracksStock(product)) return "free";
+  const stock = normalizeStockNumber(product?.stock, 0);
+  const minStock = normalizeStockNumber(product?.minStock, 0);
+  if (stock <= 0) return "empty";
+  if (minStock > 0 && stock <= minStock) return "low";
+  return "ok";
 }
 
 export default function AdminPage() {
@@ -137,6 +158,9 @@ export default function AdminPage() {
   const [imageProcessing, setImageProcessing] = useState(false);
   const [imageFeedback, setImageFeedback] = useState("");
   const [editingProductId, setEditingProductId] = useState("");
+  const [productSearch, setProductSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   useEffect(() => {
     let unsubscribeAccess = () => {};
@@ -242,6 +266,52 @@ export default function AdminPage() {
     return unsubscribeProducts;
   }, [authState.isAdmin, authState.loggedIn]);
 
+  const productCategories = useMemo(
+    () =>
+      Array.from(
+        new Set(products.map((product) => product.category).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [products]
+  );
+
+  const productStats = useMemo(() => {
+    const trackedProducts = products.filter(productTracksStock);
+
+    return {
+      total: products.length,
+      available: products.filter((product) => product.available !== false).length,
+      unavailable: products.filter((product) => product.available === false).length,
+      lowStock: trackedProducts.filter(
+        (product) => getProductInventoryStatus(product) === "low"
+      ).length,
+      emptyStock: trackedProducts.filter(
+        (product) => getProductInventoryStatus(product) === "empty"
+      ).length,
+    };
+  }, [products]);
+
+  const filteredProducts = useMemo(() => {
+    const search = productSearch.trim().toLowerCase();
+
+    return products.filter((product) => {
+      const matchesSearch =
+        !search ||
+        [product.title, product.category, product.details]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(search));
+      const matchesCategory = categoryFilter === "all" || product.category === categoryFilter;
+      const inventoryStatus = getProductInventoryStatus(product);
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "available" && product.available !== false) ||
+        (statusFilter === "unavailable" && product.available === false) ||
+        (statusFilter === "stockLow" && inventoryStatus === "low") ||
+        (statusFilter === "stockEmpty" && inventoryStatus === "empty");
+
+      return matchesSearch && matchesCategory && matchesStatus;
+    });
+  }, [categoryFilter, productSearch, products, statusFilter]);
+
   function handleFieldChange(event) {
     const { name, type, checked, value } = event.target;
     if (name === "image") {
@@ -298,6 +368,9 @@ export default function AdminPage() {
       details: formData.details.trim(),
       subProducts: parseSubProductsText(formData.subProductsText),
       available: Boolean(formData.available),
+      trackStock: Boolean(formData.trackStock),
+      stock: normalizeStockNumber(formData.stock, 0),
+      minStock: normalizeStockNumber(formData.minStock, 0),
     };
 
     if (!product.title || !product.category || !product.price) {
@@ -309,8 +382,17 @@ export default function AdminPage() {
 
     try {
       if (editingProductId) {
-        const productRef = doc(db, "products", editingProductId);
-        await updateDoc(productRef, product);
+        const previousProduct = products.find((item) => item.id === editingProductId) || {};
+        await updateProductWithStockMovement({
+          db,
+          productId: editingProductId,
+          product,
+          previousProduct,
+          actor: {
+            name: authState.name,
+            email: authState.email,
+          },
+        });
       } else {
         await addDoc(productsCollection, {
           ...product,
@@ -394,6 +476,7 @@ export default function AdminPage() {
 
   async function deleteProduct(product) {
     if (!authState.isAdmin) return;
+    if (!window.confirm(`Excluir "${product.title}"? Essa acao nao pode ser desfeita.`)) return;
 
     try {
       const productRef = doc(db, "products", product.id);
@@ -503,148 +586,287 @@ export default function AdminPage() {
               ) : null}
             </div>
 
-            <form className="admin-form" onSubmit={handleSubmit}>
+            {editingProductId ? (
+              <div className="admin-edit-banner">
+                Editando: {formData.title || "produto selecionado"}
+              </div>
+            ) : null}
+
+            <form className="admin-product-form" onSubmit={handleSubmit}>
+              <div className="admin-form-column">
+                <fieldset className="admin-form-section">
+                  <legend>Informacoes basicas</legend>
+
+                  <div className="admin-form-grid">
+                    <label>
+                      Nome do produto
+                      <input
+                        type="text"
+                        name="title"
+                        required
+                        value={formData.title}
+                        onChange={handleFieldChange}
+                      />
+                    </label>
+
+                    <label>
+                      Categoria
+                      <select
+                        name="category"
+                        required
+                        value={formData.category}
+                        onChange={handleFieldChange}
+                      >
+                        <option value="">Selecione</option>
+                        <option value="Bolos Tradicionais">Bolos Tradicionais</option>
+                        <option value="Bolos Especiais">Bolos Especiais</option>
+                        <option value="Fatias">Fatias</option>
+                        <option value="Doces">Doces</option>
+                        <option value="Sobremesas">Sobremesas</option>
+                        <option value="Bebidas">Bebidas</option>
+                        <option value="Salgados">Salgados</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Preco
+                      <input
+                        type="text"
+                        name="price"
+                        required
+                        placeholder="25.90"
+                        value={formData.price}
+                        onChange={handleFieldChange}
+                      />
+                    </label>
+
+                    <label className="admin-toggle-card">
+                      <input
+                        type="checkbox"
+                        name="available"
+                        checked={formData.available}
+                        onChange={handleFieldChange}
+                      />
+                      <span>Disponivel no cardapio</span>
+                    </label>
+                  </div>
+
+                  <label>
+                    Descricao
+                    <textarea
+                      name="details"
+                      rows="3"
+                      value={formData.details}
+                      onChange={handleFieldChange}
+                    />
+                  </label>
+                </fieldset>
+
+                <fieldset className="admin-form-section">
+                  <legend>Variacoes</legend>
+                  <label>
+                    Opcoes do produto
+                    <textarea
+                      name="subProductsText"
+                      rows="4"
+                      placeholder="Uma opcao por linha"
+                      value={formData.subProductsText}
+                      onChange={handleFieldChange}
+                    />
+                    <small className="field-help">
+                      Use uma linha para cada sabor ou tamanho. Limite de 20 opcoes.
+                    </small>
+                  </label>
+                </fieldset>
+              </div>
+
+              <div className="admin-form-column">
+                <fieldset className="admin-form-section">
+                  <legend>Foto</legend>
+
+                  {formData.image ? (
+                    <div
+                      className="admin-image-preview admin-image-preview-compact"
+                      style={{
+                        backgroundImage: `url("${formData.image}")`,
+                      }}
+                    />
+                  ) : (
+                    <div className="admin-image-placeholder admin-image-preview-compact">
+                      Previa da foto
+                    </div>
+                  )}
+
+                  <label>
+                    URL da foto
+                    <input
+                      type="text"
+                      name="image"
+                      placeholder="Cole uma URL"
+                      value={formData.image}
+                      onChange={handleFieldChange}
+                    />
+                  </label>
+
+                  <label>
+                    Enviar foto
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                    />
+                  </label>
+
+                  <div className="admin-image-actions">
+                    {imageFeedback ? <p className="admin-image-feedback">{imageFeedback}</p> : null}
+                    {formData.image ? (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => {
+                          setFormData((current) => ({ ...current, image: "" }));
+                          setImageFeedback("");
+                        }}
+                        disabled={imageProcessing}
+                      >
+                        Remover foto
+                      </button>
+                    ) : null}
+                  </div>
+                </fieldset>
+
+                <fieldset className="admin-form-section">
+                  <legend>Estoque</legend>
+
+                  <label className="admin-toggle-card">
+                    <input
+                      type="checkbox"
+                      name="trackStock"
+                      checked={formData.trackStock}
+                      onChange={handleFieldChange}
+                    />
+                    <span>Controlar estoque deste produto</span>
+                  </label>
+
+                  {formData.trackStock ? (
+                    <div className="admin-form-grid">
+                      <label>
+                        Quantidade
+                        <input
+                          type="number"
+                          name="stock"
+                          min="0"
+                          step="1"
+                          value={formData.stock}
+                          onChange={handleFieldChange}
+                        />
+                      </label>
+
+                      <label>
+                        Alerta baixo
+                        <input
+                          type="number"
+                          name="minStock"
+                          min="0"
+                          step="1"
+                          value={formData.minStock}
+                          onChange={handleFieldChange}
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <p className="admin-form-muted">Estoque livre para venda no cardapio.</p>
+                  )}
+                </fieldset>
+
+                <div className="admin-form-actions">
+                  {editingProductId ? (
+                    <button type="button" className="secondary-button" onClick={handleCancelEdit}>
+                      Cancelar
+                    </button>
+                  ) : null}
+                  <button className="primary-button" type="submit" disabled={submitting}>
+                    {submitting
+                      ? "Salvando..."
+                      : editingProductId
+                        ? "Salvar alteracoes"
+                        : "Salvar produto"}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+
+          <section className="admin-card admin-products-card">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Produtos cadastrados</p>
+                <h2>Gerenciar produtos</h2>
+              </div>
+              <span className="pill">
+                {productsLoading ? "Atualizando..." : `${filteredProducts.length}/${products.length} produtos`}
+              </span>
+            </div>
+
+            <div className="admin-summary-grid">
+              <article className="admin-summary-card">
+                <span>Total</span>
+                <strong>{productStats.total}</strong>
+              </article>
+              <article className="admin-summary-card">
+                <span>Disponiveis</span>
+                <strong>{productStats.available}</strong>
+              </article>
+              <article className="admin-summary-card">
+                <span>Indisponiveis</span>
+                <strong>{productStats.unavailable}</strong>
+              </article>
+              <article className="admin-summary-card">
+                <span>Atencao no estoque</span>
+                <strong>{productStats.lowStock + productStats.emptyStock}</strong>
+              </article>
+            </div>
+
+            <div className="admin-product-toolbar">
               <label>
-                Nome do produto
+                Buscar
                 <input
-                  type="text"
-                  name="title"
-                  required
-                  value={formData.title}
-                  onChange={handleFieldChange}
+                  type="search"
+                  placeholder="Nome, categoria ou descricao"
+                  value={productSearch}
+                  onChange={(event) => setProductSearch(event.target.value)}
                 />
               </label>
 
               <label>
                 Categoria
                 <select
-                  name="category"
-                  required
-                  value={formData.category}
-                  onChange={handleFieldChange}
+                  value={categoryFilter}
+                  onChange={(event) => setCategoryFilter(event.target.value)}
                 >
-                  <option value="">Selecione</option>
-                  <option value="Bolos Tradicionais">Bolos Tradicionais</option>
-                  <option value="Bolos Especiais">Bolos Especiais</option>
-                  <option value="Fatias">Fatias</option>
-                  <option value="Doces">Doces</option>
-                  <option value="Sobremesas">Sobremesas</option>
-                  <option value="Bebidas">Bebidas</option>
+                  <option value="all">Todas</option>
+                  {productCategories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
                 </select>
               </label>
 
               <label>
-                Preco (ex: 25.90)
-                <input
-                  type="text"
-                  name="price"
-                  required
-                  value={formData.price}
-                  onChange={handleFieldChange}
-                />
+                Status
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                >
+                  <option value="all">Todos</option>
+                  <option value="available">Disponiveis</option>
+                  <option value="unavailable">Indisponiveis</option>
+                  <option value="stockLow">Estoque baixo</option>
+                  <option value="stockEmpty">Sem estoque</option>
+                </select>
               </label>
-
-              <label>
-                Foto
-                <input
-                  type="text"
-                  name="image"
-                  placeholder="Cole uma URL ou envie uma foto abaixo"
-                  value={formData.image}
-                  onChange={handleFieldChange}
-                />
-              </label>
-
-              <label>
-                Enviar foto do celular
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                />
-              </label>
-
-              <div className="admin-image-tools full">
-                {formData.image ? (
-                  <div
-                    className="admin-image-preview"
-                    style={{
-                      backgroundImage: `url("${formData.image}")`,
-                    }}
-                  />
-                ) : (
-                  <div className="admin-image-placeholder">A previa da foto aparece aqui.</div>
-                )}
-
-                <div className="admin-image-meta">
-                  <p className="admin-image-help">
-                    Voce pode colar uma URL ou enviar uma foto direto do celular. A imagem e
-                    otimizada automaticamente antes de salvar.
-                  </p>
-                  {imageFeedback ? <p className="admin-image-feedback">{imageFeedback}</p> : null}
-                  {formData.image ? (
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() => {
-                        setFormData((current) => ({ ...current, image: "" }));
-                        setImageFeedback("");
-                      }}
-                      disabled={imageProcessing}
-                    >
-                      Remover foto
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-
-              <label className="full">
-                Descricao
-                <textarea
-                  name="details"
-                  rows="3"
-                  value={formData.details}
-                  onChange={handleFieldChange}
-                />
-              </label>
-
-              <label className="full">
-                Variacoes do produto
-                <textarea
-                  name="subProductsText"
-                  rows="4"
-                  placeholder="Uma opcao por linha"
-                  value={formData.subProductsText}
-                  onChange={handleFieldChange}
-                />
-                <small className="field-help">
-                  Se este produto tiver variacoes (ex: sabores), liste cada opcao em uma linha. As
-                  opcoes cadastradas aparecerao no cardapio. Limite de 20 opcoes.
-                </small>
-              </label>
-
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  name="available"
-                  checked={formData.available}
-                  onChange={handleFieldChange}
-                />
-                Disponivel no cardapio
-              </label>
-
-              <button type="submit" disabled={submitting}>
-                {submitting
-                  ? "Salvando..."
-                  : editingProductId
-                    ? "Salvar alteracoes"
-                    : "Salvar produto"}
-              </button>
-            </form>
-          </section>
-
-          <section className="admin-card">
-            <h2>Produtos cadastrados</h2>
+            </div>
 
             {productsLoading ? <div className="page-message">Carregando produtos...</div> : null}
 
@@ -652,43 +874,64 @@ export default function AdminPage() {
               <div className="empty-state">Nenhum produto cadastrado ainda.</div>
             ) : null}
 
-            <div className="product-list">
-              {products.map((product) => (
-                <div className="product-row" key={product.id}>
-                  <div
-                    className="product-thumb"
-                    style={
-                      product.image
-                        ? {
-                            backgroundImage: `url("${product.image}")`,
-                          }
-                        : undefined
-                    }
-                  />
+            {!productsLoading && products.length > 0 && filteredProducts.length === 0 ? (
+              <div className="empty-state">Nenhum produto encontrado com esses filtros.</div>
+            ) : null}
 
-                  <div>
-                    <strong>{product.title}</strong>
-                    <br />
-                    <small>
-                      {product.category} - {formatDisplayPrice(product.price)}
-                    </small>
-                    <br />
-                    <small>{product.available ? "Disponivel" : "Indisponivel"}</small>
-                  </div>
+            <div className="admin-product-list">
+              {filteredProducts.map((product) => {
+                const inventoryStatus = getProductInventoryStatus(product);
+                const stockTone =
+                  inventoryStatus === "empty"
+                    ? " danger"
+                    : inventoryStatus === "low"
+                      ? " warning"
+                      : "";
 
-                  <div className="product-actions">
-                    <button type="button" onClick={() => handleEditProduct(product)}>
-                      Editar
-                    </button>
-                    <button type="button" onClick={() => toggleProductAvailability(product)}>
-                      {product.available ? "Marcar indisponivel" : "Marcar disponivel"}
-                    </button>
-                    <button type="button" onClick={() => deleteProduct(product)}>
-                      Excluir
-                    </button>
-                  </div>
-                </div>
-              ))}
+                return (
+                  <article className="admin-product-row" key={product.id}>
+                    <div
+                      className="admin-product-thumb"
+                      style={
+                        product.image
+                          ? {
+                              backgroundImage: `url("${product.image}")`,
+                            }
+                          : undefined
+                      }
+                    />
+
+                    <div className="admin-product-main">
+                      <strong>{product.title}</strong>
+                      <span>{product.category}</span>
+                    </div>
+
+                    <strong className="admin-product-price">
+                      {formatDisplayPrice(product.price)}
+                    </strong>
+
+                    <span className={`admin-status-chip${product.available === false ? " muted" : ""}`}>
+                      {product.available === false ? "Indisponivel" : "Disponivel"}
+                    </span>
+
+                    <span className={`admin-status-chip${stockTone}`}>
+                      {getProductStockText(product)}
+                    </span>
+
+                    <div className="admin-product-actions">
+                      <button type="button" onClick={() => handleEditProduct(product)}>
+                        Editar
+                      </button>
+                      <button type="button" onClick={() => toggleProductAvailability(product)}>
+                        {product.available !== false ? "Pausar" : "Ativar"}
+                      </button>
+                      <button type="button" onClick={() => deleteProduct(product)}>
+                        Excluir
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </section>
         </div>

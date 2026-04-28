@@ -8,12 +8,20 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
-  setDoc,
   where,
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, db, googleProvider } from "../lib/firebase";
 import { getUserAccessProfile, syncUserProfile } from "../lib/access-control";
+import {
+  InventoryError,
+  createRecordWithStock,
+  getProductStock,
+  getProductStockText,
+  makeLineId,
+  productHasStock,
+  productTracksStock,
+} from "../lib/inventory";
 import {
   SEND_TO_CUSTOMER,
   STORE_WHATSAPP,
@@ -35,6 +43,7 @@ const ordersCollection = collection(db, "orders");
 const productsCollection = collection(db, "products");
 
 const initialCheckoutState = {
+  fulfillmentType: "",
   name: "",
   phone: "",
   payment: "",
@@ -66,6 +75,9 @@ function buildModalProduct(product) {
     image: product?.image || "",
     subProducts,
     selectedSubProduct: "",
+    trackStock: productTracksStock(product),
+    stock: getProductStock(product),
+    minStock: product?.minStock || 0,
   };
 }
 
@@ -73,9 +85,14 @@ function buildCartItem(product, selectedSubProduct = "") {
   const selectedOption = selectedSubProduct.trim();
 
   return {
+    lineId: makeLineId("cart"),
+    productId: product.id,
+    productTitle: product.title,
+    option: selectedOption,
     title: selectedOption ? `${product.title} - ${selectedOption}` : product.title,
     price: product.price,
     image: product.image || "",
+    status: "active",
   };
 }
 
@@ -241,6 +258,23 @@ export default function MenuPage() {
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
   const cartTotal = cart.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
 
+  function getProductById(productId) {
+    return products.find((product) => product.id === productId) || null;
+  }
+
+  function getCartQtyForProduct(productId) {
+    return cart.reduce((sum, item) => {
+      if (item.productId !== productId) return sum;
+      return sum + Number(item.qty || 0);
+    }, 0);
+  }
+
+  function canAddProductQty(productId, qty = 1) {
+    const product = getProductById(productId);
+    if (!productTracksStock(product)) return true;
+    return getCartQtyForProduct(productId) + qty <= getProductStock(product);
+  }
+
   function openProductModal(product) {
     setModalProduct(buildModalProduct(product));
   }
@@ -260,6 +294,11 @@ export default function MenuPage() {
   function addToCart(item) {
     if (!item?.title) return;
 
+    if (!canAddProductQty(item.productId, 1)) {
+      showCartToast(`${item.productTitle || item.title} nao tem estoque suficiente.`);
+      return;
+    }
+
     setCart((currentCart) => {
       const existing = currentCart.find((entry) => entry.title === item.title);
 
@@ -276,6 +315,14 @@ export default function MenuPage() {
   }
 
   function updateQty(title, delta) {
+    if (delta > 0) {
+      const currentItem = cart.find((item) => item.title === title);
+      if (currentItem && !canAddProductQty(currentItem.productId, delta)) {
+        showCartToast(`${currentItem.productTitle || currentItem.title} nao tem estoque suficiente.`);
+        return;
+      }
+    }
+
     setCart((currentCart) =>
       currentCart
         .map((item) => (item.title === title ? { ...item, qty: item.qty + delta } : item))
@@ -284,6 +331,11 @@ export default function MenuPage() {
   }
 
   function handleAddProduct(product) {
+    if (!productHasStock(product, 1)) {
+      showCartToast(`${product.title} esta sem estoque.`);
+      return;
+    }
+
     const modalData = buildModalProduct(product);
 
     if (modalData.subProducts.length > 0) {
@@ -334,6 +386,7 @@ export default function MenuPage() {
   }
 
   async function handleCepBlur() {
+    if (checkoutData.fulfillmentType !== "delivery") return;
     if (!isValidCEP(checkoutData.cep)) return;
 
     const data = await fetchViaCEP(checkoutData.cep);
@@ -356,13 +409,20 @@ export default function MenuPage() {
 
     const normalizedPhone = maskPhone(checkoutData.phone);
     const normalizedCep = maskCEP(checkoutData.cep);
+    const fulfillmentType = checkoutData.fulfillmentType;
+    const isDelivery = fulfillmentType === "delivery";
+
+    if (!["pickup", "delivery"].includes(fulfillmentType)) {
+      window.alert("Escolha retirada ou entrega.");
+      return;
+    }
 
     if (!isValidPhone(normalizedPhone)) {
       window.alert("Telefone/WhatsApp inválido. Use DDD + número.");
       return;
     }
 
-    if (!isValidCEP(normalizedCep)) {
+    if (isDelivery && !isValidCEP(normalizedCep)) {
       window.alert("CEP inválido. Use 8 dígitos.");
       return;
     }
@@ -370,18 +430,23 @@ export default function MenuPage() {
     setCheckoutSubmitting(true);
 
     try {
-      const viaCepData = await fetchViaCEP(normalizedCep);
+      const viaCepData = isDelivery ? await fetchViaCEP(normalizedCep) : null;
 
-      if (!viaCepData) {
+      if (isDelivery && !viaCepData) {
         window.alert("CEP não encontrado. Verifique e tente novamente.");
         return;
       }
 
       const items = cart.map((item) => ({
+        lineId: item.lineId || makeLineId("order"),
+        productId: item.productId || "",
+        productTitle: item.productTitle || item.title,
+        option: item.option || "",
         title: item.title,
         price: item.price,
         qty: item.qty,
         image: item.image || "",
+        status: "active",
       }));
 
       const totalValue = items.reduce((sum, item) => sum + parsePrice(item.price) * item.qty, 0);
@@ -390,28 +455,39 @@ export default function MenuPage() {
         name: checkoutData.name.trim(),
         phone: normalizedPhone.trim(),
         payment: normalizePayment(checkoutData.payment),
-        cep: normalizedCep.trim(),
-        address: checkoutData.address.trim() || viaCepData.logradouro || "",
-        addressNumber: checkoutData.addressNumber.trim(),
-        district: checkoutData.district.trim() || viaCepData.bairro || "",
-        complement: checkoutData.complement.trim(),
+        cep: isDelivery ? normalizedCep.trim() : "",
+        address: isDelivery ? checkoutData.address.trim() || viaCepData.logradouro || "" : "",
+        addressNumber: isDelivery ? checkoutData.addressNumber.trim() : "",
+        district: isDelivery ? checkoutData.district.trim() || viaCepData.bairro || "" : "",
+        complement: isDelivery ? checkoutData.complement.trim() : "",
         notes: checkoutData.notes.trim(),
-        city: viaCepData.localidade || "",
-        state: viaCepData.uf || "",
+        city: isDelivery ? viaCepData.localidade || "" : "",
+        state: isDelivery ? viaCepData.uf || "" : "",
       };
 
       const orderRef = doc(ordersCollection);
       const orderCode = generateOrderCode();
 
-      await setDoc(orderRef, {
-        orderCode,
+      await createRecordWithStock({
+        db,
+        recordRef: orderRef,
         items,
+        source: "order",
+        sourceCode: orderCode,
+        actor: {
+          name: customer.name,
+          email: "",
+        },
+        recordData: {
+        orderCode,
         subtotal: totalValue,
         discount: 0,
         surcharge: 0,
         total: totalValue,
+        fulfillmentType,
         customer,
         createdAt: serverTimestamp(),
+        },
       });
 
       const messageLines = [
@@ -424,12 +500,17 @@ export default function MenuPage() {
         `Total: ${formatPrice(totalValue)}`,
         "",
         "Cliente:",
+        `Tipo: ${isDelivery ? "Entrega" : "Retirada"}`,
         `Nome: ${customer.name}`,
         `WhatsApp: ${customer.phone}`,
         `Pagamento: ${customer.payment}`,
-        `Endereço: ${customer.address}, ${customer.addressNumber}, ${customer.district} - CEP ${customer.cep}`,
-        `Cidade/UF: ${customer.city} - ${customer.state}`,
-        `Complemento: ${customer.complement || "-"}`,
+        ...(isDelivery
+          ? [
+              `Endereço: ${customer.address}, ${customer.addressNumber}, ${customer.district} - CEP ${customer.cep}`,
+              `Cidade/UF: ${customer.city} - ${customer.state}`,
+              `Complemento: ${customer.complement || "-"}`,
+            ]
+          : []),
         `Observações: ${customer.notes || "-"}`,
       ];
 
@@ -458,7 +539,11 @@ export default function MenuPage() {
       setIsCartOpen(false);
     } catch (error) {
       console.error(error);
-      window.alert("Não foi possível enviar o pedido. Tente novamente.");
+      window.alert(
+        error instanceof InventoryError
+          ? error.message
+          : "Não foi possível enviar o pedido. Tente novamente."
+      );
     } finally {
       setCheckoutSubmitting(false);
     }
@@ -539,6 +624,7 @@ export default function MenuPage() {
                   {categoryProducts.map((product) => {
                     const priceText = formatDisplayPrice(product.price);
                     const image = product.image || "";
+                    const outOfStock = !productHasStock(product, 1);
 
                     return (
                       <li className="menu-item" key={product.id}>
@@ -563,6 +649,11 @@ export default function MenuPage() {
                           <div className="item-info">
                             <span>{product.title}</span>
                             <span className="price">{priceText}</span>
+                            {productTracksStock(product) ? (
+                              <small className={outOfStock ? "stock-low" : ""}>
+                                {getProductStockText(product)}
+                              </small>
+                            ) : null}
                           </div>
                         </button>
 
@@ -570,8 +661,11 @@ export default function MenuPage() {
                           className="add-to-cart"
                           type="button"
                           onClick={() => handleAddProduct(product)}
+                          disabled={outOfStock}
                         >
-                          {Array.isArray(product.subProducts) && product.subProducts.length > 0
+                          {outOfStock
+                            ? "Sem estoque"
+                            : Array.isArray(product.subProducts) && product.subProducts.length > 0
                             ? "Escolher opção"
                             : "Adicionar ao carrinho"}
                         </button>
@@ -663,7 +757,8 @@ export default function MenuPage() {
               className="modal-add"
               type="button"
               disabled={
-                modalProduct.subProducts.length > 0 && !modalProduct.selectedSubProduct
+                (modalProduct.subProducts.length > 0 && !modalProduct.selectedSubProduct) ||
+                !canAddProductQty(modalProduct.id, 1)
               }
               onClick={() => {
                 addToCart(buildCartItem(modalProduct, modalProduct.selectedSubProduct));
@@ -674,7 +769,9 @@ export default function MenuPage() {
                 ? modalProduct.selectedSubProduct
                   ? `Adicionar ${modalProduct.selectedSubProduct}`
                   : "Escolha uma opção"
-                : "Adicionar ao carrinho"}
+                : canAddProductQty(modalProduct.id, 1)
+                  ? "Adicionar ao carrinho"
+                  : "Sem estoque"}
             </button>
           </div>
         ) : null}
@@ -764,10 +861,42 @@ export default function MenuPage() {
             </button>
             <div className="modal-content">
               <h3 id="checkout-title">Finalizar pedido</h3>
-              <p className="modal-details">Preencha seus dados para enviar o pedido.</p>
+              <p className="modal-details">Escolha como quer receber e preencha seus dados.</p>
             </div>
 
             <form className="checkout-form" onSubmit={handleCheckoutSubmit}>
+              <div className="checkout-type-grid" role="group" aria-label="Tipo do pedido">
+                <button
+                  className={`checkout-type-button${checkoutData.fulfillmentType === "pickup" ? " is-selected" : ""}`}
+                  type="button"
+                  onClick={() =>
+                    setCheckoutData((current) => ({
+                      ...current,
+                      fulfillmentType: "pickup",
+                      cep: "",
+                      address: "",
+                      addressNumber: "",
+                      district: "",
+                      complement: "",
+                    }))
+                  }
+                >
+                  Retirada
+                </button>
+                <button
+                  className={`checkout-type-button${checkoutData.fulfillmentType === "delivery" ? " is-selected" : ""}`}
+                  type="button"
+                  onClick={() =>
+                    setCheckoutData((current) => ({
+                      ...current,
+                      fulfillmentType: "delivery",
+                    }))
+                  }
+                >
+                  Entrega
+                </button>
+              </div>
+
               <div className="form-grid">
                 <label>
                   Nome completo
@@ -789,43 +918,47 @@ export default function MenuPage() {
                   </select>
                 </label>
 
-                <label>
-                  CEP
-                  <input
-                    type="text"
-                    name="cep"
-                    required
-                    value={checkoutData.cep}
-                    onChange={handleCheckoutFieldChange}
-                    onBlur={handleCepBlur}
-                  />
-                </label>
+                {checkoutData.fulfillmentType === "delivery" ? (
+                  <>
+                    <label>
+                      CEP
+                      <input
+                        type="text"
+                        name="cep"
+                        required
+                        value={checkoutData.cep}
+                        onChange={handleCheckoutFieldChange}
+                        onBlur={handleCepBlur}
+                      />
+                    </label>
 
-                <label>
-                  Endereço
-                  <input type="text" name="address" required value={checkoutData.address} onChange={handleCheckoutFieldChange} />
-                </label>
+                    <label>
+                      Endereço
+                      <input type="text" name="address" required value={checkoutData.address} onChange={handleCheckoutFieldChange} />
+                    </label>
 
-                <label>
-                  Número
-                  <input
-                    type="text"
-                    name="addressNumber"
-                    required
-                    value={checkoutData.addressNumber}
-                    onChange={handleCheckoutFieldChange}
-                  />
-                </label>
+                    <label>
+                      Número
+                      <input
+                        type="text"
+                        name="addressNumber"
+                        required
+                        value={checkoutData.addressNumber}
+                        onChange={handleCheckoutFieldChange}
+                      />
+                    </label>
 
-                <label>
-                  Bairro
-                  <input type="text" name="district" required value={checkoutData.district} onChange={handleCheckoutFieldChange} />
-                </label>
+                    <label>
+                      Bairro
+                      <input type="text" name="district" required value={checkoutData.district} onChange={handleCheckoutFieldChange} />
+                    </label>
 
-                <label>
-                  Complemento
-                  <input type="text" name="complement" value={checkoutData.complement} onChange={handleCheckoutFieldChange} />
-                </label>
+                    <label>
+                      Complemento
+                      <input type="text" name="complement" value={checkoutData.complement} onChange={handleCheckoutFieldChange} />
+                    </label>
+                  </>
+                ) : null}
 
                 <label className="form-span-2">
                   Observações
@@ -873,4 +1006,3 @@ export default function MenuPage() {
     </>
   );
 }
-
