@@ -43,6 +43,7 @@ const ordersCollection = collection(db, "orders");
 const productsCollection = collection(db, "products");
 
 const initialCheckoutState = {
+  fulfillmentType: "",
   name: "",
   phone: "",
   payment: "",
@@ -385,6 +386,7 @@ export default function MenuPage() {
   }
 
   async function handleCepBlur() {
+    if (checkoutData.fulfillmentType !== "delivery") return;
     if (!isValidCEP(checkoutData.cep)) return;
 
     const data = await fetchViaCEP(checkoutData.cep);
@@ -407,13 +409,20 @@ export default function MenuPage() {
 
     const normalizedPhone = maskPhone(checkoutData.phone);
     const normalizedCep = maskCEP(checkoutData.cep);
+    const fulfillmentType = checkoutData.fulfillmentType;
+    const isDelivery = fulfillmentType === "delivery";
+
+    if (!["pickup", "delivery"].includes(fulfillmentType)) {
+      window.alert("Escolha retirada ou entrega.");
+      return;
+    }
 
     if (!isValidPhone(normalizedPhone)) {
       window.alert("Telefone/WhatsApp inválido. Use DDD + número.");
       return;
     }
 
-    if (!isValidCEP(normalizedCep)) {
+    if (isDelivery && !isValidCEP(normalizedCep)) {
       window.alert("CEP inválido. Use 8 dígitos.");
       return;
     }
@@ -421,9 +430,9 @@ export default function MenuPage() {
     setCheckoutSubmitting(true);
 
     try {
-      const viaCepData = await fetchViaCEP(normalizedCep);
+      const viaCepData = isDelivery ? await fetchViaCEP(normalizedCep) : null;
 
-      if (!viaCepData) {
+      if (isDelivery && !viaCepData) {
         window.alert("CEP não encontrado. Verifique e tente novamente.");
         return;
       }
@@ -446,14 +455,14 @@ export default function MenuPage() {
         name: checkoutData.name.trim(),
         phone: normalizedPhone.trim(),
         payment: normalizePayment(checkoutData.payment),
-        cep: normalizedCep.trim(),
-        address: checkoutData.address.trim() || viaCepData.logradouro || "",
-        addressNumber: checkoutData.addressNumber.trim(),
-        district: checkoutData.district.trim() || viaCepData.bairro || "",
-        complement: checkoutData.complement.trim(),
+        cep: isDelivery ? normalizedCep.trim() : "",
+        address: isDelivery ? checkoutData.address.trim() || viaCepData.logradouro || "" : "",
+        addressNumber: isDelivery ? checkoutData.addressNumber.trim() : "",
+        district: isDelivery ? checkoutData.district.trim() || viaCepData.bairro || "" : "",
+        complement: isDelivery ? checkoutData.complement.trim() : "",
         notes: checkoutData.notes.trim(),
-        city: viaCepData.localidade || "",
-        state: viaCepData.uf || "",
+        city: isDelivery ? viaCepData.localidade || "" : "",
+        state: isDelivery ? viaCepData.uf || "" : "",
       };
 
       const orderRef = doc(ordersCollection);
@@ -475,6 +484,7 @@ export default function MenuPage() {
         discount: 0,
         surcharge: 0,
         total: totalValue,
+        fulfillmentType,
         customer,
         createdAt: serverTimestamp(),
         },
@@ -490,12 +500,17 @@ export default function MenuPage() {
         `Total: ${formatPrice(totalValue)}`,
         "",
         "Cliente:",
+        `Tipo: ${isDelivery ? "Entrega" : "Retirada"}`,
         `Nome: ${customer.name}`,
         `WhatsApp: ${customer.phone}`,
         `Pagamento: ${customer.payment}`,
-        `Endereço: ${customer.address}, ${customer.addressNumber}, ${customer.district} - CEP ${customer.cep}`,
-        `Cidade/UF: ${customer.city} - ${customer.state}`,
-        `Complemento: ${customer.complement || "-"}`,
+        ...(isDelivery
+          ? [
+              `Endereço: ${customer.address}, ${customer.addressNumber}, ${customer.district} - CEP ${customer.cep}`,
+              `Cidade/UF: ${customer.city} - ${customer.state}`,
+              `Complemento: ${customer.complement || "-"}`,
+            ]
+          : []),
         `Observações: ${customer.notes || "-"}`,
       ];
 
@@ -846,10 +861,42 @@ export default function MenuPage() {
             </button>
             <div className="modal-content">
               <h3 id="checkout-title">Finalizar pedido</h3>
-              <p className="modal-details">Preencha seus dados para enviar o pedido.</p>
+              <p className="modal-details">Escolha como quer receber e preencha seus dados.</p>
             </div>
 
             <form className="checkout-form" onSubmit={handleCheckoutSubmit}>
+              <div className="checkout-type-grid" role="group" aria-label="Tipo do pedido">
+                <button
+                  className={`checkout-type-button${checkoutData.fulfillmentType === "pickup" ? " is-selected" : ""}`}
+                  type="button"
+                  onClick={() =>
+                    setCheckoutData((current) => ({
+                      ...current,
+                      fulfillmentType: "pickup",
+                      cep: "",
+                      address: "",
+                      addressNumber: "",
+                      district: "",
+                      complement: "",
+                    }))
+                  }
+                >
+                  Retirada
+                </button>
+                <button
+                  className={`checkout-type-button${checkoutData.fulfillmentType === "delivery" ? " is-selected" : ""}`}
+                  type="button"
+                  onClick={() =>
+                    setCheckoutData((current) => ({
+                      ...current,
+                      fulfillmentType: "delivery",
+                    }))
+                  }
+                >
+                  Entrega
+                </button>
+              </div>
+
               <div className="form-grid">
                 <label>
                   Nome completo
@@ -871,43 +918,47 @@ export default function MenuPage() {
                   </select>
                 </label>
 
-                <label>
-                  CEP
-                  <input
-                    type="text"
-                    name="cep"
-                    required
-                    value={checkoutData.cep}
-                    onChange={handleCheckoutFieldChange}
-                    onBlur={handleCepBlur}
-                  />
-                </label>
+                {checkoutData.fulfillmentType === "delivery" ? (
+                  <>
+                    <label>
+                      CEP
+                      <input
+                        type="text"
+                        name="cep"
+                        required
+                        value={checkoutData.cep}
+                        onChange={handleCheckoutFieldChange}
+                        onBlur={handleCepBlur}
+                      />
+                    </label>
 
-                <label>
-                  Endereço
-                  <input type="text" name="address" required value={checkoutData.address} onChange={handleCheckoutFieldChange} />
-                </label>
+                    <label>
+                      Endereço
+                      <input type="text" name="address" required value={checkoutData.address} onChange={handleCheckoutFieldChange} />
+                    </label>
 
-                <label>
-                  Número
-                  <input
-                    type="text"
-                    name="addressNumber"
-                    required
-                    value={checkoutData.addressNumber}
-                    onChange={handleCheckoutFieldChange}
-                  />
-                </label>
+                    <label>
+                      Número
+                      <input
+                        type="text"
+                        name="addressNumber"
+                        required
+                        value={checkoutData.addressNumber}
+                        onChange={handleCheckoutFieldChange}
+                      />
+                    </label>
 
-                <label>
-                  Bairro
-                  <input type="text" name="district" required value={checkoutData.district} onChange={handleCheckoutFieldChange} />
-                </label>
+                    <label>
+                      Bairro
+                      <input type="text" name="district" required value={checkoutData.district} onChange={handleCheckoutFieldChange} />
+                    </label>
 
-                <label>
-                  Complemento
-                  <input type="text" name="complement" value={checkoutData.complement} onChange={handleCheckoutFieldChange} />
-                </label>
+                    <label>
+                      Complemento
+                      <input type="text" name="complement" value={checkoutData.complement} onChange={handleCheckoutFieldChange} />
+                    </label>
+                  </>
+                ) : null}
 
                 <label className="form-span-2">
                   Observações

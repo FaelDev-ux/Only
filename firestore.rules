@@ -57,6 +57,11 @@ service cloud.firestore {
         && value in ['pix', 'dinheiro', 'cartao'];
     }
 
+    function validFulfillmentType(value) {
+      return value is string
+        && value in ['pickup', 'delivery'];
+    }
+
     function validImageField(value) {
       return value is string
         && value.size() <= 500000
@@ -192,6 +197,7 @@ service cloud.firestore {
 
     function validCustomerPayload() {
       return request.resource.data.customer is map
+        && validFulfillmentType(request.resource.data.fulfillmentType)
         && request.resource.data.customer.keys().hasOnly([
           'name',
           'phone',
@@ -208,10 +214,22 @@ service cloud.firestore {
         && validShortText(request.resource.data.customer.name, 120)
         && validShortText(request.resource.data.customer.phone, 20)
         && validPaymentValue(request.resource.data.customer.payment)
-        && validShortText(request.resource.data.customer.cep, 10)
-        && validShortText(request.resource.data.customer.address, 180)
-        && validShortText(request.resource.data.customer.addressNumber, 20)
-        && validShortText(request.resource.data.customer.district, 120)
+        && (
+          (
+            request.resource.data.fulfillmentType == 'delivery'
+            && validShortText(request.resource.data.customer.cep, 10)
+            && validShortText(request.resource.data.customer.address, 180)
+            && validShortText(request.resource.data.customer.addressNumber, 20)
+            && validShortText(request.resource.data.customer.district, 120)
+          )
+          || (
+            request.resource.data.fulfillmentType == 'pickup'
+            && validOptionalText(request.resource.data.customer.cep, 10)
+            && validOptionalText(request.resource.data.customer.address, 180)
+            && validOptionalText(request.resource.data.customer.addressNumber, 20)
+            && validOptionalText(request.resource.data.customer.district, 120)
+          )
+        )
         && validOptionalText(request.resource.data.customer.complement, 120)
         && validOptionalText(request.resource.data.customer.notes, 500)
         && validOptionalText(request.resource.data.customer.city, 120)
@@ -226,6 +244,7 @@ service cloud.firestore {
           'discount',
           'surcharge',
           'total',
+          'fulfillmentType',
           'customer',
           'createdAt',
           'printCompleted',

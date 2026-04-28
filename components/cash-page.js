@@ -671,6 +671,7 @@ export default function CashPage() {
       discount,
       surcharge,
       total,
+      fulfillmentType: record.fulfillmentType || "delivery",
       customer: record.customer || {},
       source: "order",
       createdAt: record.createdAt || null,

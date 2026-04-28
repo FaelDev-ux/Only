@@ -294,7 +294,8 @@ function getCustomerData(order = {}) {
     phone: firstFilled(customer.phone, ''),
     payment: firstFilled(customer.payment, order.payment),
     address: address || 'Nao informado',
-    notes: firstFilled(customer.notes, order.notes, '')
+    notes: firstFilled(customer.notes, order.notes, ''),
+    fulfillmentType: firstFilled(order.fulfillmentType, customer.fulfillmentType, '')
   }
 }
 
@@ -318,7 +319,8 @@ function buildReceiptBuffer(order, options = {}) {
   const total = toNumber(order.total) || subtotal
   const receiptTitle = firstFilled(options.title, order.receiptTitle, 'NOVO PEDIDO')
   const source = firstFilled(options.source, order.source, '')
-  const showAddress = source !== 'cashSale' && customer.address !== 'Nao informado'
+  const isPickup = customer.fulfillmentType === 'pickup'
+  const showAddress = source !== 'cashSale' && !isPickup && customer.address !== 'Nao informado'
 
   const buffers = []
   buffers.push(Buffer.from([0x1b, 0x40]))
@@ -335,6 +337,9 @@ function buildReceiptBuffer(order, options = {}) {
   buffers.push(bold(true))
   buffers.push(line(`PEDIDO: #${firstFilled(order.orderCode, order.id, '')}`))
   buffers.push(line(`DATA: ${formatDate(order)}`))
+  if (source !== 'cashSale') {
+    buffers.push(line(`TIPO: ${isPickup ? 'RETIRADA' : 'ENTREGA'}`))
+  }
   buffers.push(line(`CLIENTE: ${customer.name}`))
   if (customer.phone && customer.phone !== 'Nao informado') {
     buffers.push(line(`CONTATO: ${customer.phone}`))
