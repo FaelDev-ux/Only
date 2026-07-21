@@ -57,6 +57,16 @@ service cloud.firestore {
         && value in ['pix', 'dinheiro', 'cartao'];
     }
 
+    function validFulfillmentType(value) {
+      return value is string
+        && value in ['delivery', 'pickup'];
+    }
+
+    function isPickupOrder() {
+      return request.resource.data.keys().hasAny(['fulfillmentType'])
+        && request.resource.data.fulfillmentType == 'pickup';
+    }
+
     function validImageField(value) {
       return value is string
         && value.size() <= 500000
@@ -120,10 +130,19 @@ service cloud.firestore {
         && validShortText(request.resource.data.customer.name, 120)
         && validShortText(request.resource.data.customer.phone, 20)
         && validPaymentValue(request.resource.data.customer.payment)
-        && validShortText(request.resource.data.customer.cep, 10)
-        && validShortText(request.resource.data.customer.address, 180)
-        && validShortText(request.resource.data.customer.addressNumber, 20)
-        && validShortText(request.resource.data.customer.district, 120)
+        && (
+          isPickupOrder()
+          || (
+            validShortText(request.resource.data.customer.cep, 10)
+            && validShortText(request.resource.data.customer.address, 180)
+            && validShortText(request.resource.data.customer.addressNumber, 20)
+            && validShortText(request.resource.data.customer.district, 120)
+          )
+        )
+        && validOptionalText(request.resource.data.customer.cep, 10)
+        && validOptionalText(request.resource.data.customer.address, 180)
+        && validOptionalText(request.resource.data.customer.addressNumber, 20)
+        && validOptionalText(request.resource.data.customer.district, 120)
         && validOptionalText(request.resource.data.customer.complement, 120)
         && validOptionalText(request.resource.data.customer.notes, 500)
         && validOptionalText(request.resource.data.customer.city, 120)
@@ -138,6 +157,7 @@ service cloud.firestore {
           'discount',
           'surcharge',
           'total',
+          'fulfillmentType',
           'customer',
           'createdAt',
           'printCompleted',
@@ -161,6 +181,10 @@ service cloud.firestore {
         && request.resource.data.total <= 100000
         && request.resource.data.total
           == request.resource.data.subtotal - request.resource.data.discount + request.resource.data.surcharge
+        && (
+          !request.resource.data.keys().hasAny(['fulfillmentType'])
+          || validFulfillmentType(request.resource.data.fulfillmentType)
+        )
         && (!request.resource.data.keys().hasAny(['printCompleted'])
           || request.resource.data.printCompleted == false)
         && (!request.resource.data.keys().hasAny(['printedAt'])

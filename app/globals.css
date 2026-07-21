@@ -449,6 +449,66 @@ h1 {
   resize: vertical;
 }
 
+.fulfillment-options {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.fulfillment-options legend {
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  color: #7a5a52;
+}
+
+.fulfillment-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.form-grid .fulfillment-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  min-height: 68px;
+  padding: 12px 14px;
+  border: 1px solid rgba(214, 177, 122, 0.5);
+  border-radius: 14px;
+  background: #fffdfb;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.form-grid .fulfillment-option.is-selected {
+  border-color: rgba(154, 106, 93, 0.85);
+  background: #fff7f1;
+  box-shadow: 0 8px 18px rgba(109, 74, 63, 0.12);
+}
+
+.form-grid .fulfillment-option input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--soft-brown);
+}
+
+.fulfillment-option span {
+  display: grid;
+  gap: 3px;
+}
+
+.fulfillment-option strong {
+  color: var(--deep);
+}
+
+.fulfillment-option small {
+  color: #8b6a62;
+  line-height: 1.35;
+}
+
 .admin-image-tools {
   display: grid;
   grid-template-columns: 170px 1fr;
@@ -1433,6 +1493,10 @@ h1 {
   }
 
   .admin-image-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .fulfillment-options-grid {
     grid-template-columns: 1fr;
   }
 

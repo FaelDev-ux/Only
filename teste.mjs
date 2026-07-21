@@ -196,13 +196,17 @@ function firstFilled(...values) {
   return 'Nao informado'
 }
 
+function optionalText(value) {
+  return value === undefined || value === null ? '' : String(value).trim()
+}
+
 function normalizeItems(items = []) {
   const grouped = new Map()
 
   items.forEach(rawItem => {
     const item = typeof rawItem === 'object' && rawItem ? rawItem : { title: String(rawItem), price: 0, qty: 1 }
     const nome = firstFilled(item.title, item.nome, item.produto)
-    const observacao = firstFilled(item.observacao, item.notes, '')
+    const observacao = optionalText(item.observacao || item.notes)
     const preco = toNumber(item.price ?? item.preco)
     const quantidade = Math.max(1, toNumber(item.qty || item.qtd || 1))
     const key = `${nome}__${observacao}__${preco}`
@@ -261,9 +265,9 @@ function getCustomerData(order = {}) {
   const customer = order.customer || {}
   const address = [
     firstFilled(customer.address),
-    firstFilled(customer.addressNumber, ''),
-    firstFilled(customer.district, ''),
-    firstFilled(customer.complement, ''),
+    optionalText(customer.addressNumber),
+    optionalText(customer.district),
+    optionalText(customer.complement),
     customer.cep ? `CEP: ${customer.cep}` : ''
   ]
     .filter(Boolean)
@@ -274,8 +278,13 @@ function getCustomerData(order = {}) {
     phone: firstFilled(customer.phone),
     payment: firstFilled(customer.payment),
     address: address || 'Nao informado',
-    notes: firstFilled(customer.notes, '')
+    notes: optionalText(customer.notes)
   }
+}
+
+function getFulfillmentType(order = {}) {
+  const value = String(order.fulfillmentType || '').trim().toLowerCase()
+  return value === 'pickup' ? 'pickup' : 'delivery'
 }
 
 function formatDate(order = {}) {
@@ -291,6 +300,8 @@ function formatDate(order = {}) {
 
 function buildReceiptBuffer(order) {
   const customer = getCustomerData(order)
+  const fulfillmentType = getFulfillmentType(order)
+  const fulfillmentLabel = fulfillmentType === 'pickup' ? 'RETIRADA' : 'ENTREGA'
   const items = normalizeItems(order.items || [])
   const subtotal = toNumber(order.subtotal) || items.reduce((sum, item) => sum + item.preco * item.qtd, 0)
   const total = toNumber(order.total) || subtotal
@@ -310,10 +321,17 @@ function buildReceiptBuffer(order) {
   buffers.push(bold(true))
   buffers.push(line(`PEDIDO: #${firstFilled(order.orderCode, order.id, '')}`))
   buffers.push(line(`DATA: ${formatDate(order)}`))
+  buffers.push(align('center'))
+  buffers.push(textSize(2, 2))
+  buffers.push(line(fulfillmentLabel))
+  buffers.push(textSize(1, 1))
+  buffers.push(align('left'))
   buffers.push(line(`CLIENTE: ${customer.name}`))
   buffers.push(line(`CONTATO: ${customer.phone}`))
   buffers.push(line(`PAGAMENTO: ${customer.payment}`))
-  buffers.push(line(`ENDERECO: ${customer.address}`))
+  if (fulfillmentType === 'delivery') {
+    buffers.push(line(`ENDERECO: ${customer.address}`))
+  }
   buffers.push(bold(false))
 
   if (customer.notes && customer.notes !== 'Nao informado') {
