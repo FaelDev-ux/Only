@@ -27,6 +27,9 @@ const ordersCollection = collection(db, "orders");
 const cashSalesCollection = collection(db, "cashSales");
 const cashSessionsCollection = collection(db, "cashSessions");
 
+const CANCELED_SALE_STATUS = "canceled";
+const ACTIVE_SALE_STATUS = "active";
+
 const initialSaleForm = {
   customerName: "",
   payment: "pix",
@@ -153,6 +156,14 @@ function filterByToday(items) {
   });
 }
 
+function isCanceledCashSale(item) {
+  return item?.status === CANCELED_SALE_STATUS;
+}
+
+function filterActiveCashSales(items) {
+  return items.filter((item) => !isCanceledCashSale(item));
+}
+
 function buildSoldItemsSummary(records) {
   const summary = new Map();
 
@@ -185,7 +196,9 @@ function buildSessionDetails(session, orders, cashSales) {
   if (!session) return null;
 
   const sessionOrders = filterBySession(orders, session);
-  const sessionCashSales = filterBySession(cashSales, session);
+  const allSessionCashSales = filterBySession(cashSales, session);
+  const sessionCashSales = filterActiveCashSales(allSessionCashSales);
+  const canceledCashSales = allSessionCashSales.filter(isCanceledCashSale);
   const onlineTotals = sumByPayment(
     sessionOrders,
     (item) => item.customer?.payment,
@@ -206,8 +219,10 @@ function buildSessionDetails(session, orders, cashSales) {
       total: Number(item.total || 0),
       createdAt: item.createdAt,
       items: item.items || [],
+      source: "order",
+      isCanceled: false,
     })),
-    ...sessionCashSales.map((item) => ({
+    ...allSessionCashSales.map((item) => ({
       id: item.id,
       type: "Venda no caixa",
       orderCode: item.orderCode || String(item.id || "").slice(0, 8).toUpperCase(),
@@ -216,6 +231,12 @@ function buildSessionDetails(session, orders, cashSales) {
       total: Number(item.total || 0),
       createdAt: item.createdAt,
       items: item.items || [],
+      source: "cashSale",
+      sessionId: item.sessionId || "",
+      status: item.status || ACTIVE_SALE_STATUS,
+      isCanceled: isCanceledCashSale(item),
+      canceledAt: item.canceledAt,
+      canceledByName: item.canceledByName || "",
     })),
   ].sort((a, b) => getDocTime(b.createdAt) - getDocTime(a.createdAt));
 
@@ -226,6 +247,7 @@ function buildSessionDetails(session, orders, cashSales) {
   return {
     sessionOrders,
     sessionCashSales,
+    canceledCashSales,
     onlineTotals,
     manualTotals,
     movements,
@@ -261,6 +283,7 @@ export default function CashPage() {
   const [submittingSale, setSubmittingSale] = useState(false);
   const [openingSession, setOpeningSession] = useState(false);
   const [closingSession, setClosingSession] = useState(false);
+  const [cancellingSaleId, setCancellingSaleId] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
   const [selectedHistorySessionId, setSelectedHistorySessionId] = useState("");
 
@@ -463,7 +486,7 @@ export default function CashPage() {
   const recentSessions = useMemo(() => cashSessions.slice(0, 8), [cashSessions]);
   const sessionOrders = useMemo(() => filterBySession(orders, activeSession), [orders, activeSession]);
   const sessionCashSales = useMemo(
-    () => filterBySession(cashSales, activeSession),
+    () => filterActiveCashSales(filterBySession(cashSales, activeSession)),
     [cashSales, activeSession]
   );
   const sessionOnlineTotals = useMemo(
@@ -483,7 +506,11 @@ export default function CashPage() {
   const saleCartTotal = Math.max(0, saleCartSubtotal - saleDiscount + saleSurcharge);
 
   const todayOrders = useMemo(() => filterByToday(orders), [orders]);
-  const todayCashSales = useMemo(() => filterByToday(cashSales), [cashSales]);
+  const todayCashSaleMovements = useMemo(() => filterByToday(cashSales), [cashSales]);
+  const todayCashSales = useMemo(
+    () => filterActiveCashSales(todayCashSaleMovements),
+    [todayCashSaleMovements]
+  );
   const todayOnlineTotals = useMemo(
     () => sumByPayment(todayOrders, (item) => item.customer?.payment, (item) => item.total),
     [todayOrders]
@@ -510,8 +537,10 @@ export default function CashPage() {
           total: Number(item.total || 0),
           createdAt: item.createdAt,
           orderCode: item.orderCode || String(item.id || "").slice(0, 8).toUpperCase(),
+          source: "order",
+          isCanceled: false,
         })),
-        ...todayCashSales.map((item) => ({
+        ...todayCashSaleMovements.map((item) => ({
           id: item.id,
           type: "Venda no caixa",
           customerName: item.customerName || "Balcao",
@@ -519,11 +548,17 @@ export default function CashPage() {
           total: Number(item.total || 0),
           createdAt: item.createdAt,
           orderCode: item.orderCode || String(item.id || "").slice(0, 8).toUpperCase(),
+          source: "cashSale",
+          sessionId: item.sessionId || "",
+          status: item.status || ACTIVE_SALE_STATUS,
+          isCanceled: isCanceledCashSale(item),
+          canceledAt: item.canceledAt,
+          canceledByName: item.canceledByName || "",
         })),
       ]
         .sort((a, b) => getDocTime(b.createdAt) - getDocTime(a.createdAt))
         .slice(0, 10),
-    [todayCashSales, todayOrders]
+    [todayCashSaleMovements, todayOrders]
   );
 
   const selectedHistorySession = useMemo(
@@ -705,6 +740,7 @@ export default function CashPage() {
         customerName: saleForm.customerName.trim(),
         notes: saleForm.notes.trim(),
         source: "caixa",
+        status: ACTIVE_SALE_STATUS,
         createdAt: serverTimestamp(),
       });
 
@@ -716,6 +752,56 @@ export default function CashPage() {
       setNoticeMessage("Nao foi possivel registrar essa venda agora.");
     } finally {
       setSubmittingSale(false);
+    }
+  }
+
+  function canCancelCashSale(sale) {
+    return Boolean(
+      sale?.source === "cashSale" &&
+        !sale.isCanceled &&
+        activeSession &&
+        sale.sessionId === activeSession.id
+    );
+  }
+
+  async function handleCancelCashSale(sale) {
+    if (!sale?.id) return;
+
+    if (isCanceledCashSale(sale) || sale.isCanceled) {
+      setNoticeMessage("Essa venda ja esta cancelada.");
+      return;
+    }
+
+    if (!activeSession || sale.sessionId !== activeSession.id) {
+      setNoticeMessage("So e possivel cancelar vendas da sessao de caixa aberta.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Cancelar a venda #${sale.orderCode || String(sale.id).slice(0, 8).toUpperCase()}? Essa venda saira dos totais do caixa.`
+    );
+
+    if (!confirmed) return;
+
+    setCancellingSaleId(sale.id);
+
+    try {
+      const saleRef = doc(db, "cashSales", sale.id);
+
+      await updateDoc(saleRef, {
+        status: CANCELED_SALE_STATUS,
+        canceledAt: serverTimestamp(),
+        canceledByName: authState.name,
+        canceledByEmail: authState.email,
+        canceledReason: "Cancelada pelo caixa",
+      });
+
+      setNoticeMessage("Venda cancelada e removida dos totais do caixa.");
+    } catch (error) {
+      console.error(error);
+      setNoticeMessage("Nao foi possivel cancelar essa venda agora.");
+    } finally {
+      setCancellingSaleId("");
     }
   }
 
@@ -1021,7 +1107,10 @@ export default function CashPage() {
                 ) : (
                   <div className="order-list">
                     {todayRecentMovements.map((movement) => (
-                      <article className="order-card" key={`${movement.type}-${movement.id}`}>
+                      <article
+                        className={`order-card${movement.isCanceled ? " is-canceled" : ""}`}
+                        key={`${movement.type}-${movement.id}`}
+                      >
                         <div className="order-card-top">
                           <strong>
                             #{movement.orderCode} - {movement.customerName}
@@ -1030,11 +1119,30 @@ export default function CashPage() {
                         </div>
                         <small>
                           {movement.type} - {movement.payment}
+                          {movement.isCanceled ? " - cancelada" : ""}
                         </small>
                         <div className="order-card-bottom">
                           <span>Resumo do dia</span>
-                          <strong>{formatPrice(movement.total)}</strong>
+                          <strong className={movement.isCanceled ? "canceled-value" : undefined}>
+                            {formatPrice(movement.total)}
+                          </strong>
                         </div>
+                        {movement.source === "cashSale" ? (
+                          <div className="order-card-actions">
+                            {movement.isCanceled ? (
+                              <span className="movement-status is-canceled">Venda cancelada</span>
+                            ) : canCancelCashSale(movement) ? (
+                              <button
+                                type="button"
+                                className="danger-button"
+                                onClick={() => handleCancelCashSale(movement)}
+                                disabled={cancellingSaleId === movement.id}
+                              >
+                                {cancellingSaleId === movement.id ? "Cancelando..." : "Cancelar venda"}
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </article>
                     ))}
                   </div>
@@ -1503,7 +1611,12 @@ export default function CashPage() {
                 ) : (
                   <div className="detail-list">
                     {selectedHistoryDetails.movements.map((movement) => (
-                      <div className="detail-list-item detail-list-item-stacked" key={`${movement.type}-${movement.id}`}>
+                      <div
+                        className={`detail-list-item detail-list-item-stacked${
+                          movement.isCanceled ? " is-canceled" : ""
+                        }`}
+                        key={`${movement.type}-${movement.id}`}
+                      >
                         <div>
                           <strong>
                             #{movement.orderCode} - {movement.customerName}
@@ -1514,8 +1627,30 @@ export default function CashPage() {
                           <small>
                             {(movement.items || []).map((item) => `${item.qty}x ${item.title}`).join(" - ")}
                           </small>
+                          {movement.isCanceled ? (
+                            <small>
+                              Cancelada por {movement.canceledByName || "Caixa"} em{" "}
+                              {formatFullDateTime(movement.canceledAt)}
+                            </small>
+                          ) : null}
                         </div>
-                        <strong>{formatPrice(movement.total)}</strong>
+                        <div className="movement-side">
+                          <strong className={movement.isCanceled ? "canceled-value" : undefined}>
+                            {formatPrice(movement.total)}
+                          </strong>
+                          {movement.isCanceled ? (
+                            <span className="movement-status is-canceled">Cancelada</span>
+                          ) : canCancelCashSale(movement) ? (
+                            <button
+                              type="button"
+                              className="danger-button"
+                              onClick={() => handleCancelCashSale(movement)}
+                              disabled={cancellingSaleId === movement.id}
+                            >
+                              {cancellingSaleId === movement.id ? "Cancelando..." : "Cancelar venda"}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
                   </div>

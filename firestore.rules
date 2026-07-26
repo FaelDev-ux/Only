@@ -219,22 +219,8 @@ service cloud.firestore {
         && validCustomerPayload();
     }
 
-    function validCashSalePayload() {
-      return request.resource.data.keys().hasOnly([
-          'orderCode',
-          'sessionId',
-          'items',
-          'subtotal',
-          'discount',
-          'surcharge',
-          'total',
-          'payment',
-          'customerName',
-          'notes',
-          'source',
-          'createdAt'
-        ])
-        && validShortText(request.resource.data.orderCode, 20)
+    function validCashSaleCorePayload() {
+      return validShortText(request.resource.data.orderCode, 20)
         && request.resource.data.items is list
         && request.resource.data.items.size() > 0
         && request.resource.data.items.size() <= 30
@@ -257,6 +243,71 @@ service cloud.firestore {
         && validOptionalText(request.resource.data.customerName, 120)
         && validOptionalText(request.resource.data.notes, 500)
         && request.resource.data.source == 'caixa';
+    }
+
+    function validCashSaleCreatePayload() {
+      return request.resource.data.keys().hasOnly([
+          'orderCode',
+          'sessionId',
+          'items',
+          'subtotal',
+          'discount',
+          'surcharge',
+          'total',
+          'payment',
+          'customerName',
+          'notes',
+          'source',
+          'status',
+          'createdAt'
+        ])
+        && request.resource.data.status == 'active'
+        && validCashSaleCorePayload();
+    }
+
+    function validCashSaleCancelPayload() {
+      return request.resource.data.keys().hasOnly([
+          'orderCode',
+          'sessionId',
+          'items',
+          'subtotal',
+          'discount',
+          'surcharge',
+          'total',
+          'payment',
+          'customerName',
+          'notes',
+          'source',
+          'status',
+          'createdAt',
+          'canceledAt',
+          'canceledByName',
+          'canceledByEmail',
+          'canceledReason'
+        ])
+        && validCashSaleCorePayload()
+        && request.resource.data.orderCode == resource.data.orderCode
+        && request.resource.data.sessionId == resource.data.sessionId
+        && request.resource.data.items == resource.data.items
+        && request.resource.data.subtotal == resource.data.subtotal
+        && request.resource.data.discount == resource.data.discount
+        && request.resource.data.surcharge == resource.data.surcharge
+        && request.resource.data.total == resource.data.total
+        && request.resource.data.payment == resource.data.payment
+        && request.resource.data.customerName == resource.data.customerName
+        && request.resource.data.notes == resource.data.notes
+        && request.resource.data.source == resource.data.source
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.status == 'canceled'
+        && (
+          !resource.data.keys().hasAny(['status'])
+          || resource.data.status == 'active'
+        )
+        && request.resource.data.canceledAt != null
+        && validShortText(request.resource.data.canceledByName, 120)
+        && validShortText(request.resource.data.canceledByEmail, 200)
+        && request.resource.data.canceledByEmail == adminEmail()
+        && validOptionalText(request.resource.data.canceledReason, 300);
     }
 
     function validCashSessionCreatePayload() {
@@ -384,7 +435,8 @@ service cloud.firestore {
     match /cashSales/{saleId} {
       allow read: if canAccessCash();
       allow delete: if isAdmin();
-      allow create, update: if canAccessCash() && validCashSalePayload();
+      allow create: if canAccessCash() && validCashSaleCreatePayload();
+      allow update: if canAccessCash() && validCashSaleCancelPayload();
     }
 
     match /cashSessions/{sessionId} {
