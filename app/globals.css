@@ -1517,6 +1517,22 @@ h1 {
   top: 14px;
 }
 
+.session-sales-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(214, 177, 122, 0.35);
+}
+
+.compact-heading {
+  margin-bottom: 0;
+}
+
+.compact-heading h2 {
+  font-size: 1.25rem;
+}
+
 .mini-list {
   display: grid;
   gap: 8px;
@@ -1531,6 +1547,15 @@ h1 {
   border-radius: 10px;
   background: #ffffff;
   border: 1px solid rgba(109, 74, 63, 0.12);
+}
+
+.mini-list-item.is-canceled {
+  background: rgba(255, 247, 241, 0.72);
+  border-color: rgba(154, 80, 74, 0.32);
+}
+
+.session-sale-item {
+  align-items: flex-start;
 }
 
 .mini-list-item strong,

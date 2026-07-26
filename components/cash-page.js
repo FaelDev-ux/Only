@@ -509,9 +509,13 @@ export default function CashPage() {
   );
   const recentSessions = useMemo(() => cashSessions.slice(0, 8), [cashSessions]);
   const sessionOrders = useMemo(() => filterBySession(orders, activeSession), [orders, activeSession]);
-  const sessionCashSales = useMemo(
-    () => filterActiveCashSales(filterBySession(cashSales, activeSession)),
+  const sessionCashSaleMovements = useMemo(
+    () => filterBySession(cashSales, activeSession),
     [cashSales, activeSession]
+  );
+  const sessionCashSales = useMemo(
+    () => filterActiveCashSales(sessionCashSaleMovements),
+    [sessionCashSaleMovements]
   );
   const sessionOnlineTotals = useMemo(
     () => sumByPayment(sessionOrders, (item) => item.customer?.payment, (item) => item.total),
@@ -1752,6 +1756,76 @@ export default function CashPage() {
                 >
                   {submittingSale ? "Registrando..." : "Fechar venda no caixa"}
                 </button>
+
+                <div className="session-sales-list">
+                  <div className="section-heading compact-heading">
+                    <div>
+                      <p className="eyebrow">Vendas lancadas</p>
+                      <h2>Vendas da sessao</h2>
+                    </div>
+                    <span className="pill">
+                      {salesLoading ? "Atualizando..." : `${sessionCashSaleMovements.length} registros`}
+                    </span>
+                  </div>
+
+                  {!activeSession ? (
+                    <div className="empty-state">Abra o caixa para acompanhar as vendas da sessao.</div>
+                  ) : sessionCashSaleMovements.length === 0 ? (
+                    <div className="empty-state">Nenhuma venda lancada nesta sessao ainda.</div>
+                  ) : (
+                    <div className="mini-list">
+                      {sessionCashSaleMovements.slice(0, 6).map((sale) => {
+                        const saleMovement = {
+                          id: sale.id,
+                          type: "Venda no caixa",
+                          orderCode: sale.orderCode || String(sale.id || "").slice(0, 8).toUpperCase(),
+                          customerName: sale.customerName || "Balcao",
+                          payment: sale.payment || "Sem pagamento",
+                          total: Number(sale.total || 0),
+                          createdAt: sale.createdAt,
+                          source: "cashSale",
+                          sessionId: sale.sessionId || "",
+                          isCanceled: isCanceledCashSale(sale),
+                          status: sale.status || ACTIVE_SALE_STATUS,
+                        };
+
+                        return (
+                          <div
+                            className={`mini-list-item session-sale-item${
+                              saleMovement.isCanceled ? " is-canceled" : ""
+                            }`}
+                            key={sale.id}
+                          >
+                            <div>
+                              <strong>#{saleMovement.orderCode}</strong>
+                              <small>
+                                {saleMovement.payment} - {formatDateTime(saleMovement.createdAt)}
+                                {saleMovement.isCanceled ? " - cancelada" : ""}
+                              </small>
+                            </div>
+                            <div className="movement-side">
+                              <strong className={saleMovement.isCanceled ? "canceled-value" : undefined}>
+                                {formatPrice(saleMovement.total)}
+                              </strong>
+                              {saleMovement.isCanceled ? (
+                                <span className="movement-status is-canceled">Cancelada</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="danger-button"
+                                  onClick={() => handleCancelCashSale(saleMovement)}
+                                  disabled={cancellingSaleId === saleMovement.id}
+                                >
+                                  {cancellingSaleId === saleMovement.id ? "Cancelando..." : "Cancelar venda"}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </section>
             </div>
           ) : null}
