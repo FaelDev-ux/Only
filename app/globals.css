@@ -562,6 +562,22 @@ h1 {
   font-weight: 600;
 }
 
+.danger-button {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(154, 80, 74, 0.45);
+  background: rgba(255, 244, 241, 0.95);
+  color: #8c3f38;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .cart-fab {
   position: absolute;
   top: 16px;
@@ -1637,6 +1653,19 @@ h1 {
   border: 1px solid rgba(109, 74, 63, 0.12);
 }
 
+.order-card.is-canceled,
+.detail-list-item.is-canceled {
+  background: rgba(255, 247, 241, 0.72);
+  border-color: rgba(154, 80, 74, 0.32);
+}
+
+.order-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .order-card-button {
   width: 100%;
   text-align: left;
@@ -1761,6 +1790,34 @@ h1 {
 
 .detail-list-item small {
   color: #8b6a62;
+}
+
+.movement-side {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  min-width: max-content;
+}
+
+.movement-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 250, 246, 0.95);
+  color: #7b5a51;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.movement-status.is-canceled {
+  background: rgba(255, 238, 233, 0.95);
+  color: #8c3f38;
+}
+
+.canceled-value {
+  color: #8c3f38;
+  text-decoration: line-through;
 }
 
 .status-banner {
@@ -1891,6 +1948,11 @@ h1 {
   .order-card-bottom {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .movement-side {
+    justify-items: start;
+    min-width: 0;
   }
 
   .cash-page {
