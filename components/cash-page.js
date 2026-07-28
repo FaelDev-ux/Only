@@ -7,6 +7,7 @@ import {
   collection,
   doc,
   onSnapshot,
+  runTransaction,
   serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
@@ -26,6 +27,7 @@ const productsCollection = collection(db, "products");
 const ordersCollection = collection(db, "orders");
 const cashSalesCollection = collection(db, "cashSales");
 const cashSessionsCollection = collection(db, "cashSessions");
+const activeCashSessionRef = doc(db, "cashState", "activeSession");
 
 const CANCELED_SALE_STATUS = "canceled";
 const ACTIVE_SALE_STATUS = "active";
@@ -145,6 +147,11 @@ function filterBySession(items, session) {
   });
 }
 
+function filterCashSalesBySession(items, session) {
+  if (!session) return [];
+  return items.filter((item) => item.sessionId === session.id);
+}
+
 function filterByToday(items) {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -196,7 +203,7 @@ function buildSessionDetails(session, orders, cashSales) {
   if (!session) return null;
 
   const sessionOrders = filterBySession(orders, session);
-  const allSessionCashSales = filterBySession(cashSales, session);
+  const allSessionCashSales = filterCashSalesBySession(cashSales, session);
   const sessionCashSales = filterActiveCashSales(allSessionCashSales);
   const canceledCashSales = allSessionCashSales.filter(isCanceledCashSale);
   const onlineTotals = sumByPayment(
@@ -486,7 +493,7 @@ export default function CashPage() {
   const recentSessions = useMemo(() => cashSessions.slice(0, 8), [cashSessions]);
   const sessionOrders = useMemo(() => filterBySession(orders, activeSession), [orders, activeSession]);
   const sessionCashSaleMovements = useMemo(
-    () => filterBySession(cashSales, activeSession),
+    () => filterCashSalesBySession(cashSales, activeSession),
     [cashSales, activeSession]
   );
   const sessionCashSales = useMemo(
@@ -648,24 +655,58 @@ export default function CashPage() {
       return;
     }
 
+    if (sessionsLoading) {
+      setNoticeMessage("Aguarde o carregamento das sessoes antes de abrir o caixa.");
+      return;
+    }
+
     setOpeningSession(true);
 
     try {
       const openingAmount = Math.max(0, parsePrice(openingAmountText || "0"));
 
-      await addDoc(cashSessionsCollection, {
-        status: "open",
-        openingAmount,
-        openedAt: serverTimestamp(),
-        openedByName: authState.name,
-        openedByEmail: authState.email,
+      await runTransaction(db, async (transaction) => {
+        const activeStateSnap = await transaction.get(activeCashSessionRef);
+        const activeSessionId = activeStateSnap.exists()
+          ? activeStateSnap.data()?.activeSessionId || ""
+          : "";
+
+        if (activeSessionId) {
+          const existingSessionRef = doc(db, "cashSessions", activeSessionId);
+          const existingSessionSnap = await transaction.get(existingSessionRef);
+
+          if (existingSessionSnap.exists() && existingSessionSnap.data()?.status === "open") {
+            throw new Error("active-cash-session-exists");
+          }
+        }
+
+        const sessionRef = doc(cashSessionsCollection);
+
+        transaction.set(sessionRef, {
+          status: "open",
+          openingAmount,
+          openedAt: serverTimestamp(),
+          openedByName: authState.name,
+          openedByEmail: authState.email,
+        });
+
+        transaction.set(activeCashSessionRef, {
+          activeSessionId: sessionRef.id,
+          updatedAt: serverTimestamp(),
+          updatedByName: authState.name,
+          updatedByEmail: authState.email,
+        });
       });
 
       setOpeningAmountText("0,00");
       setNoticeMessage("Caixa aberto com sucesso.");
     } catch (error) {
       console.error(error);
-      setNoticeMessage("Nao foi possivel abrir o caixa agora.");
+      setNoticeMessage(
+        error?.message === "active-cash-session-exists"
+          ? "Ja existe um caixa aberto neste momento."
+          : "Nao foi possivel abrir o caixa agora."
+      );
     } finally {
       setOpeningSession(false);
     }
@@ -682,20 +723,36 @@ export default function CashPage() {
     try {
       const sessionRef = doc(db, "cashSessions", activeSession.id);
 
-      await updateDoc(sessionRef, {
-        status: "closed",
-        closedAt: serverTimestamp(),
-        closedByName: authState.name,
-        closedByEmail: authState.email,
-        sessionOrdersCount: sessionOrders.length,
-        sessionCashSalesCount: sessionCashSales.length,
-        onlineOrdersTotal: sessionOnlineTotals.total,
-        cashSalesTotal: sessionCashSaleTotals.total,
-        moneyPaymentsTotal: sessionOnlineTotals.cash + sessionCashSaleTotals.cash,
-        pixPaymentsTotal: sessionOnlineTotals.pix + sessionCashSaleTotals.pix,
-        cardPaymentsTotal: sessionOnlineTotals.card + sessionCashSaleTotals.card,
-        totalMovement: sessionMovementTotal,
-        expectedClosingBalance: currentBalance,
+      await runTransaction(db, async (transaction) => {
+        const activeStateSnap = await transaction.get(activeCashSessionRef);
+        const activeSessionId = activeStateSnap.exists()
+          ? activeStateSnap.data()?.activeSessionId || ""
+          : "";
+
+        transaction.update(sessionRef, {
+          status: "closed",
+          closedAt: serverTimestamp(),
+          closedByName: authState.name,
+          closedByEmail: authState.email,
+          sessionOrdersCount: sessionOrders.length,
+          sessionCashSalesCount: sessionCashSales.length,
+          onlineOrdersTotal: sessionOnlineTotals.total,
+          cashSalesTotal: sessionCashSaleTotals.total,
+          moneyPaymentsTotal: sessionOnlineTotals.cash + sessionCashSaleTotals.cash,
+          pixPaymentsTotal: sessionOnlineTotals.pix + sessionCashSaleTotals.pix,
+          cardPaymentsTotal: sessionOnlineTotals.card + sessionCashSaleTotals.card,
+          totalMovement: sessionMovementTotal,
+          expectedClosingBalance: currentBalance,
+        });
+
+        if (activeSessionId === activeSession.id) {
+          transaction.set(activeCashSessionRef, {
+            activeSessionId: "",
+            updatedAt: serverTimestamp(),
+            updatedByName: authState.name,
+            updatedByEmail: authState.email,
+          });
+        }
       });
 
       setSaleCart([]);
@@ -923,9 +980,9 @@ export default function CashPage() {
                   type="button"
                   className="modal-add"
                   onClick={handleOpenSession}
-                  disabled={openingSession}
+                  disabled={openingSession || sessionsLoading}
                 >
-                  {openingSession ? "Abrindo..." : "Abrir caixa"}
+                  {openingSession ? "Abrindo..." : sessionsLoading ? "Carregando..." : "Abrir caixa"}
                 </button>
               </div>
             )}
