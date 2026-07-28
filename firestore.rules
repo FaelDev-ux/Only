@@ -431,6 +431,19 @@ service cloud.firestore {
         && request.resource.data.expectedClosingBalance >= 0;
     }
 
+    function validCashStatePayload() {
+      return request.resource.data.keys().hasOnly([
+          'activeSessionId',
+          'updatedAt',
+          'updatedByName',
+          'updatedByEmail'
+        ])
+        && validOptionalText(request.resource.data.activeSessionId, 120)
+        && validShortText(request.resource.data.updatedByName, 120)
+        && validShortText(request.resource.data.updatedByEmail, 200)
+        && request.resource.data.updatedByEmail == adminEmail();
+    }
+
     match /users/{email} {
       allow read: if signedIn() && (email == adminEmail() || isAdmin());
 
@@ -518,6 +531,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
       allow create: if canAccessCash() && validCashSessionCreatePayload();
       allow update: if canAccessCash() && validCashSessionUpdatePayload();
+    }
+
+    match /cashState/{stateId} {
+      allow read: if canAccessCash();
+      allow create, update: if stateId == 'activeSession'
+        && canAccessCash()
+        && validCashStatePayload();
+      allow delete: if false;
     }
   }
 }
