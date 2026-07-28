@@ -528,6 +528,7 @@ export default function AdminPage() {
                   <option value="Bolos Especiais">Bolos Especiais</option>
                   <option value="Fatias">Fatias</option>
                   <option value="Doces">Doces</option>
+                  <option value="Salgados">Salgados</option>
                   <option value="Sobremesas">Sobremesas</option>
                   <option value="Bebidas">Bebidas</option>
                 </select>
