@@ -432,6 +432,7 @@ export default function MenuPage() {
         total: totalValue,
         fulfillmentType,
         customer,
+        status: "active",
         createdAt: serverTimestamp(),
       });
 
@@ -943,4 +944,3 @@ export default function MenuPage() {
     </>
   );
 }
-

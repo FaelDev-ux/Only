@@ -186,6 +186,7 @@ service cloud.firestore {
           'total',
           'fulfillmentType',
           'customer',
+          'status',
           'createdAt',
           'printCompleted',
           'printedAt'
@@ -212,11 +213,35 @@ service cloud.firestore {
           !request.resource.data.keys().hasAny(['fulfillmentType'])
           || validFulfillmentType(request.resource.data.fulfillmentType)
         )
+        && (
+          !request.resource.data.keys().hasAny(['status'])
+          || request.resource.data.status == 'active'
+        )
         && (!request.resource.data.keys().hasAny(['printCompleted'])
           || request.resource.data.printCompleted == false)
         && (!request.resource.data.keys().hasAny(['printedAt'])
           || request.resource.data.printedAt == null)
         && validCustomerPayload();
+    }
+
+    function validOrderCancelPayload() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'canceledAt',
+          'canceledByName',
+          'canceledByEmail',
+          'canceledReason'
+        ])
+        && request.resource.data.status == 'canceled'
+        && (
+          !resource.data.keys().hasAny(['status'])
+          || resource.data.status == 'active'
+        )
+        && request.resource.data.canceledAt != null
+        && validShortText(request.resource.data.canceledByName, 120)
+        && validShortText(request.resource.data.canceledByEmail, 200)
+        && request.resource.data.canceledByEmail == adminEmail()
+        && validOptionalText(request.resource.data.canceledReason, 300);
     }
 
     function validCashSaleCorePayload() {
@@ -442,7 +467,9 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow create: if validOrderPayload();
       allow read: if canAccessCash();
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (canAccessCash() && validOrderCancelPayload());
+      allow delete: if isAdmin();
     }
 
     match /cashSales/{saleId} {

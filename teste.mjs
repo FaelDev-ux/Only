@@ -487,7 +487,7 @@ async function markPrinted(orderId) {
 }
 
 function shouldPrint(order) {
-  return order.printCompleted !== true
+  return order.printCompleted !== true && order.status !== 'canceled'
 }
 
 function startListening() {
